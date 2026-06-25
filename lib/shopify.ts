@@ -164,7 +164,8 @@ export interface DraftOrderInput {
   email?: string | null;
   phone?: string | null;
   discountCode?: string;
-  discountPct?: number; // percentage 0..100
+  discountType?: "percentage" | "fixed_amount";
+  discountValue?: number; // % when percentage, currency amount when fixed_amount
   note?: string;
   tags?: string; // comma-separated, e.g. "checkout"
 }
@@ -187,12 +188,12 @@ export async function createDraftOrder(input: DraftOrderInput) {
   if (input.email) draft_order.email = input.email;
   if (input.note) draft_order.note = input.note;
   draft_order.tags = input.tags || "checkout";
-  if (input.discountPct && input.discountPct > 0) {
+  if (input.discountValue && input.discountValue > 0) {
     draft_order.applied_discount = {
       title: input.discountCode || "Discount",
       description: "Call-center recovery discount",
-      value_type: "percentage",
-      value: String(input.discountPct),
+      value_type: input.discountType === "fixed_amount" ? "fixed_amount" : "percentage",
+      value: String(input.discountValue),
     };
   }
 

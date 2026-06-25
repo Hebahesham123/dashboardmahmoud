@@ -43,6 +43,15 @@ export async function POST(req: NextRequest) {
     if (lineItems.length === 0) {
       return NextResponse.json({ error: "No line items." }, { status: 400 });
     }
+
+    const dValue = Number(body.discountValue) || 0;
+    const dType = body.discountType === "fixed_amount" ? "fixed_amount" : "percentage";
+    const dCode = (body.discountCode ?? "").trim();
+    // Tag the order: always "checkout", plus the discount % (or amount) and code.
+    const tagParts = ["checkout"];
+    if (dValue > 0) tagParts.push(dType === "percentage" ? `${dValue}%` : `discount ${dValue}`);
+    if (dCode) tagParts.push(dCode);
+
     const draft = await createDraftOrder({
       lineItems: lineItems.map((li: Record<string, unknown>) => ({
         variant_id: li.variant_id ? Number(li.variant_id) : null,
@@ -51,10 +60,11 @@ export async function POST(req: NextRequest) {
         quantity: Math.max(1, Number(li.quantity) || 1),
       })),
       email: body.email ?? null,
-      discountCode: body.discountCode ?? "",
-      discountPct: Number(body.discountPct) || 0,
+      discountCode: dCode,
+      discountType: dType,
+      discountValue: dValue,
       note: body.note ?? "Created by call center from abandoned cart",
-      tags: "checkout",
+      tags: tagParts.join(", "),
     });
 
     return NextResponse.json({

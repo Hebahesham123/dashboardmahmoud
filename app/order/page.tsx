@@ -45,7 +45,8 @@ export default function OrderPage() {
   const [cart, setCart] = useState<Cart | null>(null);
   const [items, setItems] = useState<CartItem[]>([]);
   const [discountCode, setDiscountCode] = useState("");
-  const [discountPct, setDiscountPct] = useState(0);
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed_amount">("percentage");
+  const [discountValue, setDiscountValue] = useState(0);
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +93,14 @@ export default function OrderPage() {
 
   const currency = cart?.currency || "EGP";
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
-  const pct = Math.min(Math.max(discountPct || 0, 0), 100);
-  const discountAmount = (subtotal * pct) / 100;
+  const val = Math.max(discountValue || 0, 0);
+  const discountAmount =
+    discountType === "percentage" ? (subtotal * Math.min(val, 100)) / 100 : Math.min(val, subtotal);
   const afterTotal = subtotal - discountAmount;
+  const discountLabel =
+    discountType === "percentage"
+      ? `Discount${val ? ` (${Math.min(val, 100)}%)` : ""}`
+      : `Discount${val ? ` (${fmtMoney(Math.min(val, subtotal), currency)})` : ""}`;
 
   const setQty = (idx: number, q: number) =>
     setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, quantity: Math.max(1, q || 1) } : it)));
@@ -156,7 +162,8 @@ export default function OrderPage() {
           lineItems: items.map((i) => ({ variant_id: i.variant_id, title: i.title, price: i.price, quantity: i.quantity })),
           email: cart?.email,
           discountCode,
-          discountPct: pct,
+          discountType,
+          discountValue: val,
           note: `Call-center order · cart ${cart?.checkout_number ?? ""}`,
         }),
       });
@@ -274,13 +281,31 @@ export default function OrderPage() {
                 <input value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} placeholder="e.g. WELCOME10" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Discount percentage (%)</label>
-                <input type="number" min={0} max={100} value={discountPct} onChange={(e) => setDiscountPct(Number(e.target.value))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                <label className="mb-1 block text-xs font-medium text-gray-500">Discount</label>
+                <div className="flex gap-2">
+                  <select
+                    value={discountType}
+                    onChange={(e) => setDiscountType(e.target.value as "percentage" | "fixed_amount")}
+                    className="rounded-lg border border-gray-300 px-2 py-2 text-sm"
+                  >
+                    <option value="percentage">Percentage %</option>
+                    <option value="fixed_amount">Amount ({currency})</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    max={discountType === "percentage" ? 100 : undefined}
+                    value={discountValue}
+                    onChange={(e) => setDiscountValue(Number(e.target.value))}
+                    placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 100"}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
               </div>
 
               <div className="space-y-2 rounded-lg bg-gray-50 p-4 text-sm">
                 <Line label="Before discount" value={fmtMoney(subtotal, currency)} />
-                <Line label={`Discount${pct ? ` (${pct}%)` : ""}${discountCode ? ` · ${discountCode}` : ""}`} value={`− ${fmtMoney(discountAmount, currency)}`} tone="rose" />
+                <Line label={`${discountLabel}${discountCode ? ` · ${discountCode}` : ""}`} value={`− ${fmtMoney(discountAmount, currency)}`} tone="rose" />
                 <div className="border-t border-gray-200 pt-2">
                   <Line label="After discount" value={fmtMoney(afterTotal, currency)} bold />
                 </div>

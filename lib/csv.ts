@@ -86,7 +86,7 @@ export function aggregateTraffic(cells: string[][]): {
     }
   }
   const headers = cells[headerRow];
-  const dataRows = cells.slice(headerRow + 1);
+  let dataRows = cells.slice(headerRow + 1);
 
   const visitorsIdx = findCol(headers, (h) => h.includes("visitor"));
   const sessionsIdx = findCol(
@@ -97,6 +97,18 @@ export function aggregateTraffic(cells: string[][]): {
   const checkoutIdx = findCol(headers, (h) => h.includes("checkout"));
 
   if (visitorsIdx < 0 && sessionsIdx < 0 && cartIdx < 0 && checkoutIdx < 0) return null;
+
+  // If this is a "by landing page" report, only count the NS Home page
+  // (/pages/ns-home-1 and its /en, /ar variants) — not every landing page.
+  const pathIdx = findCol(headers, (h) => h.includes("landingpagepath") || h.includes("path"));
+  if (pathIdx >= 0) {
+    const NS_HOME = "pages/ns-home-1";
+    const filtered = dataRows.filter((c) =>
+      (c[pathIdx] || "").toLowerCase().includes(NS_HOME)
+    );
+    // only narrow if we actually matched the page (otherwise keep all rows)
+    if (filtered.length > 0) dataRows = filtered;
+  }
 
   const sum = (idx: number) =>
     idx < 0 ? 0 : dataRows.reduce((s, c) => s + toNum(c[idx]), 0);
