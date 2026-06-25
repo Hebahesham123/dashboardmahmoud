@@ -65,6 +65,7 @@ export async function GET(req: Request) {
           quantity: li.quantity,
           price: Number(li.price || 0),
           product_id: li.product_id,
+          variant_id: li.variant_id,
           // public storefront product page (falls back to admin if no handle)
           url: handle
             ? `https://${store}/products/${handle}`

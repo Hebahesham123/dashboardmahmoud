@@ -117,6 +117,55 @@ export function channelOf(o: ShopifyOrder): "online" | "offline" {
   return o.source_name === "pos" ? "offline" : "online";
 }
 
+export interface DraftOrderInput {
+  lineItems: { variant_id?: number | null; title?: string; price?: number; quantity: number }[];
+  email?: string | null;
+  phone?: string | null;
+  discountCode?: string;
+  discountPct?: number; // percentage 0..100
+  note?: string;
+}
+
+/**
+ * Create a Shopify Draft Order (used by the call center to recover an
+ * abandoned cart with a discount). Returns the created draft order, which
+ * includes an invoice_url that can be sent to the customer to pay.
+ */
+export async function createDraftOrder(input: DraftOrderInput) {
+  const { token, base } = shopifyConfig();
+
+  const line_items = input.lineItems.map((li) =>
+    li.variant_id
+      ? { variant_id: li.variant_id, quantity: li.quantity }
+      : { title: li.title || "Item", price: (li.price ?? 0).toFixed(2), quantity: li.quantity }
+  );
+
+  const draft_order: Record<string, unknown> = { line_items };
+  if (input.email) draft_order.email = input.email;
+  if (input.note) draft_order.note = input.note;
+  if (input.discountPct && input.discountPct > 0) {
+    draft_order.applied_discount = {
+      title: input.discountCode || "Discount",
+      description: "Call-center recovery discount",
+      value_type: "percentage",
+      value: String(input.discountPct),
+    };
+  }
+
+  const res = await fetch(`${base}/draft_orders.json`, {
+    method: "POST",
+    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_order }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify draft order ${res.status}: ${body.slice(0, 400)}`);
+  }
+  const data = (await res.json()) as { draft_order: { id: number; name: string; invoice_url: string; total_price: string } };
+  return data.draft_order;
+}
+
 /** Map a Shopify order into our `orders` table row shape. */
 export function toOrderRow(o: ShopifyOrder) {
   const totalItems = o.line_items.reduce((s, li) => s + (li.quantity || 0), 0);

@@ -47,7 +47,7 @@ export default function TrafficPage() {
         <MetricCard label="Sessions" value={fmtNum(agg.sessions)} icon="🖱️" accent="sky" formula="Σ sessions from your imported analytics" />
         <MetricCard label="Add-to-Cart Rate" value={fmtPct(cartRate)} icon="🛒" accent="amber" formula={`${fmtNum(agg.add_to_cart)} cart adds ÷ ${fmtNum(agg.sessions)} sessions = ${fmtPct(cartRate)}`} />
         <MetricCard label="Reached-Checkout Rate" value={fmtPct(checkoutRate)} icon="➡️" accent="indigo" formula={`${fmtNum(agg.reached_checkout)} reached checkout ÷ ${fmtNum(agg.sessions)} sessions = ${fmtPct(checkoutRate)}`} />
-        <MetricCard label="Conversion Rate" value={fmtPct(conv)} icon="🎯" accent="emerald" formula={`${fmtNum(orders)} orders ÷ ${fmtNum(agg.visitors)} visitors = ${fmtPct(conv)}`} />
+        <MetricCard label="Conversion Rate" value={fmtPct(conv)} icon="🎯" accent="emerald" formula={`${fmtNum(orders)} orders ÷ ${fmtNum(agg.visitors)} unique NS Home visitors = ${fmtPct(conv)}`} />
         <MetricCard label="Abandoned Checkouts" value={fmtNum(abandonedCount)} icon="❌" accent="rose" href="/abandoned" formula={`Real Shopify abandoned carts in ${rangeLabel} →`} />
         <MetricCard label="Abandoned Rate" value={fmtPct(abandoned)} icon="🚪" accent="rose" formula={`${fmtNum(abandonedCount)} abandoned ÷ (${fmtNum(orders)} orders + ${fmtNum(abandonedCount)}) = ${fmtPct(abandoned)}`} />
         <MetricCard label="Days With Data" value={fmtNum(traffic.length)} icon="📆" accent="sky" formula="Days in range that have an imported daily traffic row" />

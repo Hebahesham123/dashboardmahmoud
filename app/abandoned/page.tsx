@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createBrowserClient } from "@/lib/supabase";
 import { useDash } from "@/components/DataProvider";
 import { Card, PageHeader, EmptyState, Badge } from "@/components/ui";
@@ -24,6 +25,7 @@ interface AbItem {
   quantity: number;
   price: number;
   product_id: number | null;
+  variant_id: number | null;
   url: string | null;
 }
 interface AbCheckout {
@@ -83,7 +85,30 @@ const emptyFollowup = (): Followup => ({ answers: {}, call_status: "not_called",
 
 export default function AbandonedPage() {
   const supabase = useMemo(() => createBrowserClient(), []);
+  const router = useRouter();
   const { rangeLabel, range } = useDash();
+
+  // Stash the cart and open the Create Order page.
+  const goToOrder = (c: AbCheckout) => {
+    sessionStorage.setItem(
+      "order_cart",
+      JSON.stringify({
+        checkout_number: c.checkout_number,
+        customer_name: c.customer_name,
+        email: c.email,
+        phone: c.phone,
+        currency: c.currency,
+        items: c.items.map((i) => ({
+          title: i.title,
+          variant_title: i.variant_title,
+          quantity: i.quantity,
+          price: i.price,
+          variant_id: i.variant_id,
+        })),
+      })
+    );
+    router.push("/order");
+  };
   const [showAll, setShowAll] = useState(false);
   const [allCheckouts, setAllCheckouts] = useState<AbCheckout[]>([]);
   const [followups, setFollowups] = useState<Record<string, Followup>>({});
@@ -480,9 +505,16 @@ export default function AbandonedPage() {
                             {saving[String(c.id)] ? "Saving…" : "Save"}
                           </button>
                           {saved[String(c.id)] && <span className="text-xs text-emerald-600">Saved ✓</span>}
+                          <button
+                            onClick={() => goToOrder(c)}
+                            className="ml-auto rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                            title="Create a discounted order from this cart"
+                          >
+                            🧾 Order
+                          </button>
                           {c.recovery_url && (
-                            <a href={c.recovery_url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs font-medium text-indigo-600 hover:underline">
-                              Open recovery checkout ↗
+                            <a href={c.recovery_url} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-indigo-600 hover:underline">
+                              Recovery link ↗
                             </a>
                           )}
                         </div>
