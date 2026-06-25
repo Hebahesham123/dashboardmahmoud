@@ -1,8 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDraftOrder } from "@/lib/shopify";
+import { createDraftOrder, fetchDraftOrders } from "@/lib/shopify";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
+
+/** GET /api/order — list recent draft orders created via the dashboard. */
+export async function GET() {
+  const store = process.env.SHOPIFY_STORE_DOMAIN!;
+  try {
+    const list = await fetchDraftOrders(50);
+    return NextResponse.json({
+      ok: true,
+      orders: list.map((d) => ({
+        id: d.id,
+        name: d.name,
+        created_at: d.created_at,
+        total_price: Number(d.total_price || 0),
+        status: d.status,
+        customer_name: d.customer
+          ? `${d.customer.first_name ?? ""} ${d.customer.last_name ?? ""}`.trim()
+          : null,
+        email: d.email,
+        invoice_url: d.invoice_url,
+        admin_url: `https://${store}/admin/draft_orders/${d.id}`,
+      })),
+    });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
+  }
+}
 
 /**
  * POST /api/order — create a Shopify Draft Order from a (recovered) cart,
@@ -28,6 +54,7 @@ export async function POST(req: NextRequest) {
       discountCode: body.discountCode ?? "",
       discountPct: Number(body.discountPct) || 0,
       note: body.note ?? "Created by call center from abandoned cart",
+      tags: "checkout",
     });
 
     return NextResponse.json({

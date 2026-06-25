@@ -117,6 +117,48 @@ export function channelOf(o: ShopifyOrder): "online" | "offline" {
   return o.source_name === "pos" ? "offline" : "online";
 }
 
+export interface ProductLookup {
+  id: number;
+  title: string;
+  image: string | null;
+  variants: { id: number; title: string; price: number; available: boolean }[];
+}
+
+/** Fetch a product by its storefront handle, with variants (for adding to an order). */
+export async function fetchProductByHandle(handle: string): Promise<ProductLookup | null> {
+  const { token, base } = shopifyConfig();
+  const params = new URLSearchParams({ handle, fields: "id,title,images,variants" });
+  const res = await fetch(`${base}/products.json?${params.toString()}`, {
+    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify product ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as {
+    products: {
+      id: number;
+      title: string;
+      images?: { src: string }[];
+      variants: { id: number; title: string; price: string; inventory_quantity?: number; inventory_policy?: string }[];
+    }[];
+  };
+  const p = data.products?.[0];
+  if (!p) return null;
+  return {
+    id: p.id,
+    title: p.title,
+    image: p.images?.[0]?.src ?? null,
+    variants: p.variants.map((v) => ({
+      id: v.id,
+      title: v.title,
+      price: Number(v.price || 0),
+      available: (v.inventory_quantity ?? 0) > 0 || v.inventory_policy === "continue",
+    })),
+  };
+}
+
 export interface DraftOrderInput {
   lineItems: { variant_id?: number | null; title?: string; price?: number; quantity: number }[];
   email?: string | null;
@@ -124,6 +166,7 @@ export interface DraftOrderInput {
   discountCode?: string;
   discountPct?: number; // percentage 0..100
   note?: string;
+  tags?: string; // comma-separated, e.g. "checkout"
 }
 
 /**
@@ -143,6 +186,7 @@ export async function createDraftOrder(input: DraftOrderInput) {
   const draft_order: Record<string, unknown> = { line_items };
   if (input.email) draft_order.email = input.email;
   if (input.note) draft_order.note = input.note;
+  draft_order.tags = input.tags || "checkout";
   if (input.discountPct && input.discountPct > 0) {
     draft_order.applied_discount = {
       title: input.discountCode || "Discount",
@@ -164,6 +208,33 @@ export async function createDraftOrder(input: DraftOrderInput) {
   }
   const data = (await res.json()) as { draft_order: { id: number; name: string; invoice_url: string; total_price: string } };
   return data.draft_order;
+}
+
+export interface DraftOrderSummary {
+  id: number;
+  name: string;
+  created_at: string;
+  total_price: string;
+  status: string;
+  email: string | null;
+  invoice_url: string | null;
+  customer: { first_name?: string; last_name?: string } | null;
+}
+
+/** List recent draft orders (created by the call center). */
+export async function fetchDraftOrders(limit = 50): Promise<DraftOrderSummary[]> {
+  const { token, base } = shopifyConfig();
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${base}/draft_orders.json?${params.toString()}`, {
+    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify draft orders ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as { draft_orders: DraftOrderSummary[] };
+  return data.draft_orders ?? [];
 }
 
 /** Map a Shopify order into our `orders` table row shape. */

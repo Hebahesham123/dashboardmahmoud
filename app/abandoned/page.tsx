@@ -93,6 +93,7 @@ export default function AbandonedPage() {
     sessionStorage.setItem(
       "order_cart",
       JSON.stringify({
+        id: c.id,
         checkout_number: c.checkout_number,
         customer_name: c.customer_name,
         email: c.email,
@@ -201,12 +202,14 @@ export default function AbandonedPage() {
   };
 
   // Default to the selected month (matches the Overview's count); toggle for all.
-  const checkouts = showAll
+  // Carts that were converted into an order (call_status = recovered) drop off.
+  const checkouts = (showAll
     ? allCheckouts
     : allCheckouts.filter((c) => {
         const d = (c.created_at || "").slice(0, 10);
         return d >= range.start && d <= range.end;
-      });
+      })
+  ).filter((c) => (fu(c.id).call_status ?? "not_called") !== "recovered");
 
   const totalValue = checkouts.reduce((s, c) => s + c.total_price, 0);
   const pending = checkouts.filter((c) => (fu(c.id).call_status ?? "not_called") === "not_called").length;
