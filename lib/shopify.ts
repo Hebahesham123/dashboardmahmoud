@@ -159,6 +159,47 @@ export async function fetchCollectionProductHandles(collectionHandle: string): P
   return handles;
 }
 
+/**
+ * Product handles across ALL collections whose handle or title contains
+ * `match` (e.g. "ns-home" → ns-home, ns-home-bedroom, …).
+ */
+export async function fetchProductHandlesInCollectionsMatching(match: string): Promise<Set<string>> {
+  const { token, base } = shopifyConfig();
+  const headers = { "X-Shopify-Access-Token": token, "Content-Type": "application/json" };
+  const m = match.toLowerCase();
+  const ids: number[] = [];
+
+  for (const type of ["custom_collections", "smart_collections"]) {
+    let url: string | null = `${base}/${type}.json?limit=250`;
+    while (url) {
+      const res = await fetch(url, { headers, cache: "no-store" });
+      if (!res.ok) break;
+      const data = (await res.json()) as Record<string, { id: number; handle?: string; title?: string }[]>;
+      for (const col of data[type] ?? []) {
+        if ((col.handle ?? "").toLowerCase().includes(m) || (col.title ?? "").toLowerCase().includes(m)) {
+          ids.push(col.id);
+        }
+      }
+      url = parseNextLink(res.headers.get("link"));
+      if (url) await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  const handles = new Set<string>();
+  for (const id of ids) {
+    let url: string | null = `${base}/products.json?collection_id=${id}&limit=250&fields=handle`;
+    while (url) {
+      const res = await fetch(url, { headers, cache: "no-store" });
+      if (!res.ok) break;
+      const data = (await res.json()) as { products: { handle: string }[] };
+      for (const p of data.products) handles.add(p.handle.toLowerCase());
+      url = parseNextLink(res.headers.get("link"));
+      if (url) await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  return handles;
+}
+
 export interface ProductLookup {
   id: number;
   title: string;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
 import { parseCsv, mapTrafficCsv, aggregateTraffic } from "@/lib/csv";
-import { fetchCollectionProductHandles } from "@/lib/shopify";
+import { fetchProductHandlesInCollectionsMatching } from "@/lib/shopify";
 
 export const dynamic = "force-dynamic";
 
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     // Product pages count only if they're in the "ns-home" collection.
     let productHandles: Set<string> | undefined;
     try {
-      productHandles = await fetchCollectionProductHandles("ns-home");
+      productHandles = await fetchProductHandlesInCollectionsMatching("ns-home");
     } catch {
       productHandles = undefined;
     }
