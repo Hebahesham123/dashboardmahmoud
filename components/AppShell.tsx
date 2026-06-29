@@ -7,7 +7,9 @@ import { useDash } from "./DataProvider";
 import { exportWorkbook } from "@/lib/exporter";
 import { rangeForPreset, PRESET_LABELS, type RangePreset } from "@/lib/format";
 
-const NAV = [
+const INQUIRIES_URL = process.env.NEXT_PUBLIC_INQUIRIES_URL || "";
+
+const NAV: { href: string; label: string; icon: string; external?: boolean }[] = [
   { href: "/", label: "Overview", icon: "📊" },
   { href: "/daily", label: "Daily Report", icon: "📅" },
   { href: "/products", label: "Products", icon: "🛍️" },
@@ -15,6 +17,10 @@ const NAV = [
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
   { href: "/import", label: "Import Data", icon: "⬆️" },
+  // External "link out" tab to the Sample Inquiries dashboard.
+  ...(INQUIRIES_URL
+    ? [{ href: INQUIRIES_URL, label: "Sample Inquiries", icon: "📨", external: true }]
+    : []),
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -77,17 +83,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="space-y-1 p-3">
           {NAV.map((item) => {
             const active = pathname === item.href;
+            const cls = `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+              active ? "bg-indigo-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+            }`;
+            if (item.external) {
+              return (
+                <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" className={cls}>
+                  <span className="text-base">{item.icon}</span>
+                  {item.label}
+                  <span className="ml-auto text-xs text-slate-500">↗</span>
+                </a>
+              );
+            }
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-                  active
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`}
-              >
+              <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={cls}>
                 <span className="text-base">{item.icon}</span>
                 {item.label}
               </Link>
