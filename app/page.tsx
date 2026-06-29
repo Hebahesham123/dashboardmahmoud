@@ -13,7 +13,6 @@ export default function OverviewPage() {
 
   const online = channels.filter((c) => c.channel === "online").reduce((s, c) => s + Number(c.sales), 0);
   const offline = channels.filter((c) => c.channel === "offline").reduce((s, c) => s + Number(c.sales), 0);
-  const conv = agg.visitors > 0 ? agg.orders_count / agg.visitors : 0;
   // Real abandoned checkouts from Shopify (not the analytics funnel).
   const totalCheckouts = agg.orders_count + abandonedCount; // checkouts started = completed + abandoned
   const abandoned = totalCheckouts > 0 ? abandonedCount / totalCheckouts : 0;
@@ -71,14 +70,6 @@ export default function OverviewPage() {
           icon="📉"
           href="/abandoned"
           formula={`${fmtNum(abandonedCount)} abandoned ÷ ${fmtNum(totalCheckouts)} checkouts = ${fmtPct(abandoned)}`}
-        />
-        <MetricCard
-          label="Conversion Rate"
-          value={fmtPct(conv)}
-          accent="violet"
-          icon="🎯"
-          href="/traffic"
-          formula={`${fmtNum(agg.orders_count)} orders ÷ ${fmtNum(agg.visitors)} unique NS Home visitors = ${fmtPct(conv)}. Click to see visitors →`}
         />
       </div>
 
