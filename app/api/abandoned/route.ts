@@ -53,6 +53,9 @@ export async function GET(req: Request) {
       address: fmtAddr(c.shipping_address) || fmtAddr(c.billing_address) || null,
       currency: c.currency,
       total_price: Number(c.total_price || 0),
+      had_discount:
+        Number(c.total_discounts || 0) > 0 || (c.discount_codes?.length ?? 0) > 0,
+      discount_codes: (c.discount_codes ?? []).map((d) => d.code).filter(Boolean),
       recovery_url: c.abandoned_checkout_url,
       customer_name: c.customer
         ? `${c.customer.first_name ?? ""} ${c.customer.last_name ?? ""}`.trim()

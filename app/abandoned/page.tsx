@@ -38,6 +38,8 @@ interface AbCheckout {
   address: string | null;
   currency: string;
   total_price: number;
+  had_discount: boolean;
+  discount_codes: string[];
   recovery_url: string;
   customer_name: string | null;
   items: AbItem[];
@@ -99,6 +101,8 @@ export default function AbandonedPage() {
         email: c.email,
         phone: c.phone,
         currency: c.currency,
+        had_discount: c.had_discount,
+        discount_codes: c.discount_codes,
         items: c.items.map((i) => ({
           title: i.title,
           variant_title: i.variant_title,
@@ -415,6 +419,7 @@ export default function AbandonedPage() {
                         {c.phone ? ` · ${c.phone}` : ""}
                       </div>
                     </div>
+                    {c.had_discount && <Badge color="rose">had discount</Badge>}
                     <Badge color={f.call_status === "recovered" ? "emerald" : f.call_status === "not_called" ? "amber" : "sky"}>
                       {status?.label ?? "Not called yet"}
                     </Badge>

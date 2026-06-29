@@ -373,6 +373,8 @@ export interface AbandonedCheckout {
   phone: string | null;
   currency: string;
   total_price: string;
+  total_discounts: string | null;
+  discount_codes: { code: string; amount: string; type?: string }[] | null;
   abandoned_checkout_url: string;
   customer: {
     first_name?: string;

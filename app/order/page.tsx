@@ -20,6 +20,8 @@ interface Cart {
   email: string | null;
   phone: string | null;
   currency: string;
+  had_discount?: boolean;
+  discount_codes?: string[];
   items: CartItem[];
 }
 interface ProductVariant { id: number; title: string; price: number; available: boolean }
@@ -68,6 +70,12 @@ export default function OrderPage() {
         const c = JSON.parse(raw) as Cart;
         setCart(c);
         setItems(c.items.map((i) => ({ ...i })));
+        // If the cart already had a discount, the call center removes it and
+        // applies 30% off — default the discount to 30% (percentage).
+        if (c.had_discount) {
+          setDiscountType("percentage");
+          setDiscountValue(30);
+        }
       }
     } catch {
       /* ignore */
@@ -203,6 +211,13 @@ export default function OrderPage() {
         <Link href="/abandoned" className="text-sm text-indigo-600 hover:underline">← Back to Abandoned Carts</Link>
       </div>
 
+      {cart?.had_discount && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>This cart already had a discount{cart.discount_codes?.length ? ` (${cart.discount_codes.join(", ")})` : ""}.</strong>{" "}
+          It’s removed in this new order — apply <strong>30%</strong> off and enter <strong>your own discount name</strong> below.
+        </div>
+      )}
+
       {cart ? (
         <div className="mb-8 grid gap-6 lg:grid-cols-3">
           {/* Items + add by URL */}
@@ -277,8 +292,8 @@ export default function OrderPage() {
           <Card title="Discount & Total">
             <div className="space-y-4 p-5">
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Discount code</label>
-                <input value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} placeholder="e.g. WELCOME10" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                <label className="mb-1 block text-xs font-medium text-gray-500">Discount name (your code)</label>
+                <input value={discountCode} onChange={(e) => setDiscountCode(e.target.value)} placeholder="e.g. CALLCENTER30" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">Discount</label>
