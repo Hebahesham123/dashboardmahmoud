@@ -22,7 +22,7 @@ export interface DailyMetric {
 /** One row per (day, channel) from `daily_orders_by_channel`. */
 export interface ChannelSales {
   order_date: string;
-  channel: "online" | "offline";
+  channel: "online" | "offline" | "draft";
   orders: number;
   sales: number;
   fulfilled: number;
