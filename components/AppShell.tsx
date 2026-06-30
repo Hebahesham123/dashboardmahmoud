@@ -48,8 +48,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // Call-center restricted mode (set after logging in at /team). When on,
   // only the limited nav shows and other routes redirect to /abandoned.
   const [ccMode, setCcMode] = useState(false);
+  const [ccEmail, setCcEmail] = useState("");
   useEffect(() => {
-    setCcMode(typeof window !== "undefined" && localStorage.getItem("cc_mode") === "1");
+    const on = typeof window !== "undefined" && localStorage.getItem("cc_mode") === "1";
+    setCcMode(on);
+    setCcEmail(on ? localStorage.getItem("cc_email") || "" : "");
   }, [pathname]);
   useEffect(() => {
     if (ccMode && !CC_ALLOWED.includes(pathname)) router.replace("/abandoned");
@@ -58,6 +61,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const nav = ccMode ? CC_NAV : NAV;
   const logoutCc = () => {
     localStorage.removeItem("cc_mode");
+    localStorage.removeItem("cc_email");
     window.location.href = "/team";
   };
 
@@ -94,6 +98,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setExporting(false);
     }
   };
+
+  // The login page renders bare — no sidebar, no header — until they log in.
+  if (pathname === "/team") {
+    return <div className="min-h-screen bg-gray-50">{children}</div>;
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -162,7 +171,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             ☰
           </button>
           {ccMode ? (
-            <div className="font-semibold text-gray-700">Call Center</div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-gray-700">Call Center</span>
+              {ccEmail && <span className="text-sm text-gray-400">· {ccEmail}</span>}
+            </div>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2">
