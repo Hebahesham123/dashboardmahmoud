@@ -13,6 +13,10 @@ export default function OverviewPage() {
 
   const online = channels.filter((c) => c.channel === "online").reduce((s, c) => s + Number(c.sales), 0);
   const offline = channels.filter((c) => c.channel === "offline").reduce((s, c) => s + Number(c.sales), 0);
+  // Sales before vs after refunds.
+  const salesAfter = Number(agg.total_sales) || 0; // net (after refunds)
+  const refunds = Number(agg.total_refunds) || 0;
+  const salesBefore = salesAfter + refunds; // gross (before refunds)
   // Real abandoned checkouts from Shopify (not the analytics funnel).
   const totalCheckouts = agg.orders_count + abandonedCount; // checkouts started = completed + abandoned
   const abandoned = totalCheckouts > 0 ? abandonedCount / totalCheckouts : 0;
@@ -35,11 +39,18 @@ export default function OverviewPage() {
       {/* KPI cards — only the 6 requested, each showing how it's calculated */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <MetricCard
-          label="Total Sales"
-          value={fmtMoney(agg.total_sales)}
+          label="Total Sales (before refund)"
+          value={fmtMoney(salesBefore)}
+          accent="sky"
+          icon="🧾"
+          formula={`Gross sales of ${fmtNum(agg.orders_count)} online orders, before any refunds`}
+        />
+        <MetricCard
+          label="Total Sales (after refund)"
+          value={fmtMoney(salesAfter)}
           accent="emerald"
           icon="💰"
-          formula={`Σ net sales (after refunds) of ${fmtNum(agg.orders_count)} online orders`}
+          formula={`Before refund ${fmtMoney(salesBefore)} − refunds ${fmtMoney(refunds)} = ${fmtMoney(salesAfter)}`}
         />
         <MetricCard
           label="Number of Orders"
