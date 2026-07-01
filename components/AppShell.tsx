@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDash } from "./DataProvider";
 import { exportWorkbook } from "@/lib/exporter";
 import { rangeForPreset, PRESET_LABELS, type RangePreset } from "@/lib/format";
@@ -81,13 +81,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Keep a ref to the latest runSync so the interval always uses the CURRENT
+  // date range (otherwise the 60s auto-sync reloads with a stale first-render
+  // range and reverts the numbers to "this month").
+  const runSyncRef = useRef(runSync);
+  runSyncRef.current = runSync;
+
   // Auto-sync: pull new Shopify orders on load and every 60s while open,
   // so orders placed in Shopify appear in the dashboard on their own.
   useEffect(() => {
-    runSync(true);
-    const id = setInterval(() => runSync(true), 60_000);
+    runSyncRef.current(true);
+    const id = setInterval(() => runSyncRef.current(true), 60_000);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const doExport = async () => {
