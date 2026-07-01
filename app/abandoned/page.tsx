@@ -468,22 +468,7 @@ export default function AbandonedPage() {
 
                       {/* RIGHT: call-center follow-up */}
                       <div className="rounded-lg border border-gray-200 bg-white p-4">
-                        <h3 className="mb-2 text-xs font-semibold uppercase text-gray-500">
-                          استبيان الكول سنتر · Call-center survey
-                        </h3>
-                        <div className="mb-3 space-y-3" dir="rtl">
-                          {QUESTIONS.map((q) => (
-                            <div key={q.key}>
-                              <label className="mb-1 block text-sm font-medium text-gray-700">{q.label}</label>
-                              <MultiSelect
-                                options={q.options}
-                                value={f.answers[q.key] ?? []}
-                                onChange={(v) => setAnswer(c.id, q.key, v)}
-                              />
-                            </div>
-                          ))}
-                        </div>
-
+                        {/* Call status + Notes FIRST, then the survey */}
                         <label className="mb-1 block text-xs font-medium text-gray-500">Call status</label>
                         <select
                           value={f.call_status}
@@ -495,14 +480,50 @@ export default function AbandonedPage() {
                           ))}
                         </select>
 
-                        <label className="mb-1 block text-xs font-medium text-gray-500">Notes</label>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">
+                          Notes · الملاحظات
+                        </label>
                         <textarea
                           value={f.note}
                           onChange={(e) => update(c.id, { note: e.target.value })}
-                          rows={2}
-                          placeholder="What did the customer say?"
-                          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          rows={3}
+                          placeholder="اكتب أي ملاحظات هنا في أي وقت — What did the customer say?"
+                          className="mb-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                         />
+
+                        <h3 className="mb-2 text-xs font-semibold uppercase text-gray-500">
+                          استبيان الكول سنتر · Call-center survey
+                        </h3>
+                        <div className="mb-3 space-y-3" dir="rtl">
+                          {QUESTIONS.map((q) => {
+                            const selected = f.answers[q.key] ?? [];
+                            const showOther = q.key === "q1" && selected.includes("سبب آخر");
+                            return (
+                              <div key={q.key}>
+                                <label className="mb-1 block text-sm font-medium text-gray-700">{q.label}</label>
+                                <MultiSelect
+                                  options={q.options}
+                                  value={selected}
+                                  onChange={(v) => setAnswer(c.id, q.key, v)}
+                                />
+                                {showOther && (
+                                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2">
+                                    <label className="mb-1 block text-xs font-medium text-amber-700">
+                                      اكتب السبب الآخر هنا (يُحفظ في الملاحظات، ويمكنك الإضافة في أي وقت)
+                                    </label>
+                                    <textarea
+                                      value={f.note}
+                                      onChange={(e) => update(c.id, { note: e.target.value })}
+                                      rows={2}
+                                      placeholder="اكتب السبب الآخر..."
+                                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
 
                         <div className="flex items-center gap-3">
                           <button
