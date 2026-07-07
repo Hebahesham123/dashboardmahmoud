@@ -84,6 +84,37 @@ export function TrafficTrend({ data }: { data: DailyMetric[] }) {
 }
 
 /** Conversion-rate line over time (%). */
+/** Daily unique visitors & sessions (bars) + visitors-per-session (line). */
+export function VisitorsPerSession({ data }: { data: DailyMetric[] }) {
+  const d = data.map((m) => {
+    const v = Number(m.visitors);
+    const s = Number(m.sessions);
+    return {
+      date: mmdd(m.day),
+      visitors: v,
+      sessions: s,
+      perSession: s > 0 ? Number((v / s).toFixed(2)) : 0, // unique visitors per session
+    };
+  });
+  return (
+    <div className="h-72 w-full px-2 pb-2">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={d} margin={{ top: 16, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="date" fontSize={11} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="l" fontSize={11} tickLine={false} axisLine={false} width={40} />
+          <YAxis yAxisId="r" orientation="right" fontSize={11} tickLine={false} axisLine={false} width={40} />
+          <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e5e7eb", fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar yAxisId="l" dataKey="visitors" name="Unique Visitors" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+          <Bar yAxisId="l" dataKey="sessions" name="Sessions" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+          <Line yAxisId="r" type="monotone" dataKey="perSession" name="Visitors / Session" stroke="#f59e0b" strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function ConversionTrend({ data }: { data: DailyMetric[] }) {
   const d = data.map((m) => ({
     date: mmdd(m.day),
