@@ -37,7 +37,7 @@ export default function TrafficPage() {
         <MetricCard label="Conversion Rate" value={fmtPct(conv)} icon="🎯" accent="emerald" formula={`${fmtNum(orders)} orders ÷ ${fmtNum(agg.visitors)} unique NS Home visitors = ${fmtPct(conv)}`} />
       </div>
 
-      <Card className="mt-6" title="Unique Visitors per Session (daily)" subtitle="Bars: visitors & sessions per day · Line: visitors ÷ session">
+      <Card className="mt-6" title="Sessions per Unique Visitor (daily)" subtitle="Bars: visitors & sessions per day · Line: sessions ÷ unique visitor">
         {metrics.some((m) => Number(m.visitors) > 0 || Number(m.sessions) > 0) ? (
           <VisitorsPerSession data={metrics} />
         ) : (

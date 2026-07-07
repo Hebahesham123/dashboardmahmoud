@@ -117,7 +117,7 @@ export function SalesOrdersLabeled({ data }: { data: DailyMetric[] }) {
   );
 }
 
-/** Daily unique visitors & sessions (bars) + visitors-per-session (line). */
+/** Daily unique visitors & sessions (bars) + sessions-per-unique-visitor (line). */
 export function VisitorsPerSession({ data }: { data: DailyMetric[] }) {
   const d = data.map((m) => {
     const v = Number(m.visitors);
@@ -126,7 +126,7 @@ export function VisitorsPerSession({ data }: { data: DailyMetric[] }) {
       date: mmdd(m.day),
       visitors: v,
       sessions: s,
-      perSession: s > 0 ? Number((v / s).toFixed(2)) : 0, // unique visitors per session
+      perUser: v > 0 ? Number((s / v).toFixed(2)) : 0, // sessions per unique visitor
     };
   });
   return (
@@ -141,7 +141,7 @@ export function VisitorsPerSession({ data }: { data: DailyMetric[] }) {
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar yAxisId="l" dataKey="visitors" name="Unique Visitors" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
           <Bar yAxisId="l" dataKey="sessions" name="Sessions" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-          <Line yAxisId="r" type="monotone" dataKey="perSession" name="Visitors / Session" stroke="#f59e0b" strokeWidth={2} dot={false} />
+          <Line yAxisId="r" type="monotone" dataKey="perUser" name="Sessions / Unique Visitor" stroke="#f59e0b" strokeWidth={2} dot={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
