@@ -20,12 +20,15 @@ async function handle(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // Rolling window (default 45 days) so each run stays under the function
+  // timeout; the dataset is large. Override with ?from=&to= for backfills.
+  const days = Number(req.nextUrl.searchParams.get("days")) || 45;
   const to = req.nextUrl.searchParams.get("to") || new Date().toISOString().slice(0, 10);
   const from =
     req.nextUrl.searchParams.get("from") ||
     (() => {
       const d = new Date();
-      d.setUTCDate(d.getUTCDate() - 120);
+      d.setUTCDate(d.getUTCDate() - days);
       return d.toISOString().slice(0, 10);
     })();
 
