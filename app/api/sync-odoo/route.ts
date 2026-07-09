@@ -20,10 +20,10 @@ async function handle(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Rolling window (default 10 days) so each run stays well under Vercel's
-  // 60s function limit; the dataset is huge (~430k lines). The 6h cron keeps
-  // recent days fresh; use ?from=&to= for one-off historical backfills.
-  const days = Number(req.nextUrl.searchParams.get("days")) || 10;
+  // Rolling window (default 3 days ≈ 3s) so it never hits Vercel's 60s limit;
+  // the dataset is huge (~430k lines). Runs often (dashboard auto-sync + 6h
+  // cron) to keep recent days fresh; use ?from=&to= for historical backfills.
+  const days = Number(req.nextUrl.searchParams.get("days")) || 3;
   const to = req.nextUrl.searchParams.get("to") || new Date().toISOString().slice(0, 10);
   const from =
     req.nextUrl.searchParams.get("from") ||

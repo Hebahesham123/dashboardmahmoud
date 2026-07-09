@@ -95,6 +95,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => clearInterval(id);
   }, []);
 
+  // Auto-sync offline (Odoo استهلاكي) invoices while the dashboard is open —
+  // a small 3-day window (~3s) refreshed on load and every 15 min. Same-origin
+  // call is authorized via the x-ui-sync header (no secret needed). Admin only.
+  const runOdooRef = useRef<() => Promise<void>>(async () => {});
+  runOdooRef.current = async () => {
+    if (ccMode) return;
+    try {
+      await fetch("/api/sync-odoo?days=3", { headers: { "x-ui-sync": "1" } });
+      await reload();
+    } catch {
+      /* ignore — offline sync is best-effort */
+    }
+  };
+  useEffect(() => {
+    runOdooRef.current();
+    const id = setInterval(() => runOdooRef.current(), 15 * 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const doExport = async () => {
     setExporting(true);
     try {
