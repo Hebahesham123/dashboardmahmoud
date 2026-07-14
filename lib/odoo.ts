@@ -25,6 +25,8 @@ export interface OdooInvoiceLine {
   customer_id: number;
   product_name: string;
   product_id: number;
+  attribute_name?: string;
+  pricelist?: string;
   qty: number;
   price_total: number;
   product_category: string;

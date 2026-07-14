@@ -127,6 +127,8 @@ export default function AbandonedPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortKey, setSortKey] = useState("date_desc");
   const [showGraph, setShowGraph] = useState(false);
+  // When on, the list shows carts the call center turned into orders (recovered).
+  const [viewRecovered, setViewRecovered] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -206,17 +208,23 @@ export default function AbandonedPage() {
   };
 
   // Default to the selected month (matches the Overview's count); toggle for all.
-  // Carts that were converted into an order (call_status = recovered) drop off.
-  const checkouts = (showAll
+  const scoped = showAll
     ? allCheckouts
     : allCheckouts.filter((c) => {
         const d = (c.created_at || "").slice(0, 10);
         return d >= range.start && d <= range.end;
-      })
-  ).filter((c) => (fu(c.id).call_status ?? "not_called") !== "recovered");
+      });
+  // Carts the call center turned into an order (call_status = recovered).
+  const recovered = scoped.filter((c) => (fu(c.id).call_status ?? "not_called") === "recovered");
+  const recoveredValue = recovered.reduce((s, c) => s + c.total_price, 0);
+  // Outstanding carts (not yet recovered) — the normal working list.
+  const pendingCarts = scoped.filter((c) => (fu(c.id).call_status ?? "not_called") !== "recovered");
 
-  const totalValue = checkouts.reduce((s, c) => s + c.total_price, 0);
-  const pending = checkouts.filter((c) => (fu(c.id).call_status ?? "not_called") === "not_called").length;
+  // The list shows either the outstanding carts or the recovered orders.
+  const checkouts = viewRecovered ? recovered : pendingCarts;
+
+  const totalValue = pendingCarts.reduce((s, c) => s + c.total_price, 0);
+  const pending = pendingCarts.filter((c) => (fu(c.id).call_status ?? "not_called") === "not_called").length;
 
   // Apply search + status filter, then sort.
   const visible = useMemo(() => {
@@ -299,13 +307,21 @@ export default function AbandonedPage() {
         </button>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <SummaryCard label="Abandoned Carts" value={fmtNum(checkouts.length)} />
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <SummaryCard label="Abandoned Carts" value={fmtNum(pendingCarts.length)} />
         <SummaryCard label="Potential Value" value={fmtMoney(totalValue)} />
         <SummaryCard label="Not Called Yet" value={fmtNum(pending)} />
         <SummaryCard
           label="Items Left Behind"
-          value={fmtNum(checkouts.reduce((s, c) => s + c.items.reduce((a, i) => a + i.quantity, 0), 0))}
+          value={fmtNum(pendingCarts.reduce((s, c) => s + c.items.reduce((a, i) => a + i.quantity, 0), 0))}
+        />
+        <SummaryCard
+          label="Call-Center Orders"
+          value={fmtNum(recovered.length)}
+          hint={recovered.length ? fmtMoney(recoveredValue) : "click to view"}
+          accent="emerald"
+          active={viewRecovered}
+          onClick={() => setViewRecovered((v) => !v)}
         />
       </div>
 
@@ -394,7 +410,22 @@ export default function AbandonedPage() {
         </div>
       )}
 
-      <Card title={`${visible.length} of ${checkouts.length} Abandoned Checkouts`}>
+      {viewRecovered && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span>
+            Showing <b>{recovered.length}</b> order(s) the call center created from abandoned carts
+            {" "}({fmtMoney(recoveredValue)}) in {showAll ? "all time" : rangeLabel}.
+          </span>
+          <button
+            onClick={() => setViewRecovered(false)}
+            className="rounded-lg border border-emerald-300 bg-white px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+          >
+            ← Back to abandoned
+          </button>
+        </div>
+      )}
+
+      <Card title={`${visible.length} of ${checkouts.length} ${viewRecovered ? "Call-Center Orders" : "Abandoned Checkouts"}`}>
         {visible.length === 0 ? (
           <EmptyState loading={loading} label="No carts match these filters." />
         ) : (
@@ -633,11 +664,42 @@ function Row({ label, value, copyable }: { label: string; value: string; copyabl
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</div>
-      <div className="mt-2 text-2xl font-bold text-gray-900">{value}</div>
-    </div>
+function SummaryCard({
+  label,
+  value,
+  hint,
+  accent,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: "emerald";
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const base = "rounded-2xl border p-5 text-left shadow-sm transition";
+  const tone = accent === "emerald"
+    ? active
+      ? "border-emerald-500 bg-emerald-600 text-white"
+      : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+    : "border-gray-200 bg-white";
+  const cls = `${base} ${tone} ${onClick ? "cursor-pointer" : ""}`;
+  const labelCls = active ? "text-emerald-50" : accent === "emerald" ? "text-emerald-700" : "text-gray-500";
+  const valueCls = active ? "text-white" : "text-gray-900";
+  const inner = (
+    <>
+      <div className={`text-xs font-medium uppercase tracking-wide ${labelCls}`}>{label}</div>
+      <div className={`mt-2 text-2xl font-bold ${valueCls}`}>{value}</div>
+      {hint && <div className={`mt-0.5 text-xs ${active ? "text-emerald-100" : "text-gray-400"}`}>{hint}</div>}
+    </>
+  );
+  return onClick ? (
+    <button type="button" onClick={onClick} className={`${cls} w-full`}>
+      {inner}
+    </button>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
