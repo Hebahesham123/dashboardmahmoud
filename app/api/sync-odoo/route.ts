@@ -34,9 +34,9 @@ async function handle(req: NextRequest) {
     })();
 
   try {
-    const { filter } = odooConfig();
+    const { filter, excludeBranches } = odooConfig();
     const rows = await fetchOdooInvoices(from, to);
-    const days = aggregateOffline(rows, filter);
+    const days = aggregateOffline(rows, filter, excludeBranches);
 
     const sb = createServiceClient();
     if (days.length) {

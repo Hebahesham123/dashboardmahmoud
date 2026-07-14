@@ -4,10 +4,17 @@ export function odooConfig() {
   const base = process.env.ODOO_API_URL || process.env.ODOO_BASE_URL;
   const key = process.env.ODOO_API_TOKEN || process.env.ODOO_API_KEY;
   const filter = process.env.ODOO_CUSTOMER_FILTER ?? "استهلاكي";
+  const path = process.env.ODOO_INVOICES_PATH || "/api/nshome/invoices";
+  // Branches that are actually ONLINE (Shopify) — excluded from offline totals
+  // so we don't double-count orders already in the Shopify online numbers.
+  const excludeBranches = (process.env.ODOO_EXCLUDE_BRANCH ?? "shopify")
+    .split(",")
+    .map((b) => b.trim().toLowerCase())
+    .filter(Boolean);
   if (!base || !key) {
     throw new Error("ODOO_API_URL / ODOO_API_TOKEN are not set in the environment.");
   }
-  return { base: base.replace(/\/+$/, ""), key, filter };
+  return { base: base.replace(/\/+$/, ""), key, filter, path, excludeBranches };
 }
 
 export interface OdooInvoiceLine {
@@ -28,13 +35,13 @@ export interface OdooInvoiceLine {
 
 /** Fetch all invoice lines from Odoo between two dates (paginated). */
 export async function fetchOdooInvoices(dateFrom: string, dateTo: string): Promise<OdooInvoiceLine[]> {
-  const { base, key } = odooConfig();
+  const { base, key, path } = odooConfig();
   const all: OdooInvoiceLine[] = [];
   let page = 1;
   const limit = 500;
 
   for (let guard = 0; guard < 1000; guard++) {
-    const res = await fetch(`${base}/api/analytics/invoices`, {
+    const res = await fetch(`${base}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "API-Key": key },
       // Send the filters directly in the body (the endpoint ignores a
@@ -74,11 +81,18 @@ export interface OfflineDay {
  * type (matched on the customer_type field). Invoices = distinct
  * invoice_number per day; amount = Σ price_total; items = Σ qty.
  */
-export function aggregateOffline(rows: OdooInvoiceLine[], filter: string): OfflineDay[] {
+export function aggregateOffline(
+  rows: OdooInvoiceLine[],
+  filter: string,
+  excludeBranches: string[] = []
+): OfflineDay[] {
   const f = filter.trim().toLowerCase();
+  const skip = new Set(excludeBranches.map((b) => b.toLowerCase()));
   const byDay = new Map<string, { amount: number; items: number; invoices: Set<string> }>();
   for (const r of rows) {
     if (f && !(r.customer_type ?? "").toLowerCase().includes(f)) continue;
+    // Skip ONLINE branches (Shopify) — those are already in the online numbers.
+    if (skip.size && skip.has((r.branch ?? "").toLowerCase())) continue;
     const day = (r.invoice_date ?? "").slice(0, 10);
     if (!day) continue;
     const e = byDay.get(day) ?? { amount: 0, items: 0, invoices: new Set<string>() };
