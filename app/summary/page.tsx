@@ -31,7 +31,7 @@ const BORDER = "border border-[#8a5730]";
 
 export default function SummaryPage() {
   const [mode, setMode] = useState<"day" | "range">("day");
-  const [day, setDay] = useState(yesterdayStr());
+  const [day, setDay] = useState(todayStr());
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [data, setData] = useState<SummaryResp | null>(null);

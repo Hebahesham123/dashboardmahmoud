@@ -9,7 +9,18 @@ import { buildInsights } from "@/lib/insights";
 import { useEffect, useMemo, useState } from "react";
 
 export default function OverviewPage() {
-  const { rangeLabel, range, metrics, agg, bestSellers, abandonedCount, offlineAmount, offlineInvoices, loading, error } = useDash();
+  const { rangeLabel, range, metrics, agg, bestSellers, abandonedCount, offlineAmount, offlineInvoices, prev, loading, error } = useDash();
+
+  /** Build a MetricCard `compare` prop, or undefined while `prev` is loading. */
+  const cmp = (
+    current: number,
+    previous: number | undefined,
+    format: (n: number) => string,
+    inverse?: boolean
+  ) =>
+    prev && previous !== undefined
+      ? { current, previous, label: prev.label, format, inverse }
+      : undefined;
 
   const online = agg.total_sales; // Shopify online (website + call-center)
   const offline = offlineAmount; // Odoo استهلاكي (offline) sales
@@ -20,6 +31,12 @@ export default function OverviewPage() {
   // Real abandoned checkouts from Shopify (not the analytics funnel).
   const totalCheckouts = agg.orders_count + abandonedCount; // checkouts started = completed + abandoned
   const abandoned = totalCheckouts > 0 ? abandonedCount / totalCheckouts : 0;
+  // Average order value per channel.
+  const onlineAov = agg.orders_count > 0 ? salesAfter / agg.orders_count : 0;
+  const offlineAov = offlineInvoices > 0 ? offline / offlineInvoices : 0;
+  const prevOnlineAov = prev && prev.orders > 0 ? prev.salesAfter / prev.orders : undefined;
+  const prevOfflineAov =
+    prev && prev.offlineInvoices > 0 ? prev.offlineAmount / prev.offlineInvoices : undefined;
   const insights = useMemo(() => buildInsights(metrics, bestSellers), [metrics, bestSellers]);
 
   const funnel = [
@@ -36,66 +53,115 @@ export default function OverviewPage() {
 
       {error && <ErrorBanner msg={error} />}
 
-      {/* KPI cards — only the 6 requested, each showing how it's calculated */}
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <MetricCard
-          label="Total Sales (before refund)"
-          value={fmtMoney(salesBefore)}
-          accent="sky"
-          icon="🧾"
-          formula={`Gross sales of ${fmtNum(agg.orders_count)} online orders, before any refunds`}
-        />
-        <MetricCard
-          label="Total Sales (after refund)"
-          value={fmtMoney(salesAfter)}
-          accent="emerald"
-          icon="💰"
-          formula={`Before refund ${fmtMoney(salesBefore)} − refunds ${fmtMoney(refunds)} = ${fmtMoney(salesAfter)}`}
-        />
-        <MetricCard
-          label="COD / Not Paid Yet"
-          value={fmtMoney(agg.unpaid_sales)}
-          accent="amber"
-          icon="💵"
-          formula={`${fmtNum(agg.unpaid_orders)} unpaid orders (COD / pending). Already included in Total Sales.`}
-        />
-        <MetricCard
-          label="Offline Sales (Odoo)"
-          value={fmtMoney(offline)}
-          accent="violet"
-          icon="🏬"
-          formula={`${fmtNum(offlineInvoices)} استهلاكي invoices in ${rangeLabel} — synced from Odoo. Separate from online Total Sales.`}
-        />
-        <MetricCard
-          label="Number of Orders"
-          value={fmtNum(agg.orders_count)}
-          accent="indigo"
-          icon="🧾"
-          formula="All orders — website + call-center, incl. cancelled/refunded/COD; only POS excluded"
-        />
-        <MetricCard
-          label="Total Checkout"
-          value={fmtNum(totalCheckouts)}
-          accent="sky"
-          icon="🧮"
-          formula={`${fmtNum(agg.orders_count)} orders + ${fmtNum(abandonedCount)} abandoned = ${fmtNum(totalCheckouts)}`}
-        />
-        <MetricCard
-          label="Abandoned Checkout"
-          value={fmtNum(abandonedCount)}
-          accent="amber"
-          icon="🛒"
-          href="/abandoned"
-          formula={`Real Shopify abandoned carts in ${rangeLabel}. Click to view & call →`}
-        />
-        <MetricCard
-          label="Abandoned Checkout Rate"
-          value={fmtPct(abandoned)}
-          accent="rose"
-          icon="📉"
-          href="/abandoned"
-          formula={`${fmtNum(abandonedCount)} abandoned ÷ ${fmtNum(totalCheckouts)} checkouts = ${fmtPct(abandoned)}`}
-        />
+      {/* KPI cards — two channels side by side: OFFLINE left, ONLINE right.
+          Rows, top to bottom: sales after refund · orders · AOV · abandoned.
+          Cards are interleaved (offline, online) so each row lines up, and every
+          card carries a vs-previous-period delta. */}
+      <div className="mb-6">
+        <div className="mb-3 hidden gap-4 md:grid md:grid-cols-2">
+          <ChannelHeader
+            title="Offline — Branches"
+            subtitle={`Odoo invoices (Maadi, Semoha, …) — ${rangeLabel}`}
+            accent="bg-violet-50 text-violet-700 ring-violet-200"
+            icon="🏬"
+          />
+          <ChannelHeader
+            title="Online — Website"
+            subtitle={`Shopify website + call-center — ${rangeLabel}`}
+            accent="bg-emerald-50 text-emerald-700 ring-emerald-200"
+            icon="🌐"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* 1 — Total Sales (after refund) */}
+          <MetricCard
+            tag="Offline"
+            label="Total Sales (after refund)"
+            value={fmtMoney(offline)}
+            accent="violet"
+            icon="🏬"
+            formula={`${fmtNum(offlineInvoices)} Odoo branch invoices in ${rangeLabel}, net of returns.`}
+            compare={cmp(offline, prev?.offlineAmount, fmtMoney)}
+          />
+          <MetricCard
+            tag="Online"
+            label="Total Sales (after refund)"
+            value={fmtMoney(salesAfter)}
+            accent="emerald"
+            icon="💰"
+            formula={`Before refund ${fmtMoney(salesBefore)} − refunds ${fmtMoney(refunds)} = ${fmtMoney(
+              salesAfter
+            )}. Includes ${fmtMoney(agg.unpaid_sales)} COD / not paid yet (${fmtNum(agg.unpaid_orders)} orders).`}
+            compare={cmp(salesAfter, prev?.salesAfter, fmtMoney)}
+          />
+
+          {/* 2 — Total Number of Orders */}
+          <MetricCard
+            tag="Offline"
+            label="Total Number of Orders"
+            value={fmtNum(offlineInvoices)}
+            accent="violet"
+            icon="🧾"
+            formula="Distinct Odoo branch invoices; refund (R-prefix) invoices are not counted as orders."
+            compare={cmp(offlineInvoices, prev?.offlineInvoices, fmtNum)}
+          />
+          <MetricCard
+            tag="Online"
+            label="Total Number of Orders"
+            value={fmtNum(agg.orders_count)}
+            accent="indigo"
+            icon="🧾"
+            formula={`Website + call-center, incl. cancelled/refunded/COD; only POS excluded. Total checkouts started: ${fmtNum(
+              totalCheckouts
+            )}.`}
+            compare={cmp(agg.orders_count, prev?.orders, fmtNum)}
+          />
+
+          {/* 3 — Avg Order Value */}
+          <MetricCard
+            tag="Offline"
+            label="Avg Order Value"
+            value={fmtMoney(offlineAov)}
+            accent="violet"
+            icon="📐"
+            formula={`${fmtMoney(offline)} ÷ ${fmtNum(offlineInvoices)} invoices = ${fmtMoney(offlineAov)}`}
+            compare={cmp(offlineAov, prevOfflineAov, fmtMoney)}
+          />
+          <MetricCard
+            tag="Online"
+            label="Avg Order Value"
+            value={fmtMoney(onlineAov)}
+            accent="sky"
+            icon="📐"
+            formula={`${fmtMoney(salesAfter)} ÷ ${fmtNum(agg.orders_count)} orders = ${fmtMoney(onlineAov)}`}
+            compare={cmp(onlineAov, prevOnlineAov, fmtMoney)}
+          />
+
+          {/* 4 — Abandoned Checkout (online only) */}
+          <MetricCard
+            tag="Offline"
+            label="Abandoned Checkout"
+            value="—"
+            accent="violet"
+            icon="🛒"
+            muted
+            formula="Not applicable — walk-in branch sales have no checkout funnel to abandon."
+          />
+          <MetricCard
+            tag="Online"
+            label="Abandoned Checkout"
+            value={fmtNum(abandonedCount)}
+            accent="amber"
+            icon="🛒"
+            href="/abandoned"
+            formula={`Real Shopify abandoned carts in ${rangeLabel} — ${fmtNum(abandonedCount)} ÷ ${fmtNum(
+              totalCheckouts
+            )} checkouts = ${fmtPct(abandoned)}. Click to view & call →`}
+            compare={cmp(abandonedCount, prev?.abandonedCount, fmtNum, true)}
+          />
+
+        </div>
       </div>
 
       <ShopifyBreakdown start={range.start} end={range.end} />
@@ -170,6 +236,29 @@ export default function OverviewPage() {
             {bestSellers.length === 0 && <li className="px-5 py-8 text-center text-sm text-gray-400">No sales yet.</li>}
           </ol>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+/** Column header above a channel's KPI stack (desktop only). */
+function ChannelHeader({
+  title,
+  subtitle,
+  accent,
+  icon,
+}: {
+  title: string;
+  subtitle: string;
+  accent: string;
+  icon: string;
+}) {
+  return (
+    <div className={`flex items-center gap-3 rounded-xl px-4 py-2.5 ring-1 ${accent}`}>
+      <span className="text-lg">{icon}</span>
+      <div className="min-w-0">
+        <div className="text-sm font-bold">{title}</div>
+        <div className="truncate text-xs opacity-70">{subtitle}</div>
       </div>
     </div>
   );

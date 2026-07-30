@@ -21,6 +21,9 @@ export function MetricCard({
   icon,
   accent = "indigo",
   href,
+  tag,
+  muted,
+  compare,
 }: {
   label: string;
   value: string;
@@ -28,16 +31,37 @@ export function MetricCard({
   icon?: ReactNode;
   accent?: Accent;
   href?: string;
+  /** Small chip above the label — e.g. the channel ("Online" / "Offline"). */
+  tag?: string;
+  /** Dim the value, for a not-applicable metric. */
+  muted?: boolean;
+  /** Comparison vs the previous period — renders a ▲/▼ % chip under the value. */
+  compare?: {
+    current: number;
+    previous: number;
+    label: string; // period being compared against, e.g. "2026-06"
+    format: (n: number) => string;
+    /** true when up is bad (abandoned carts, returns) — flips the colours. */
+    inverse?: boolean;
+  };
 }) {
   const inner = (
     <div className="h-full rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md">
-      <div className="flex items-start justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          {tag && (
+            <span className={`mb-1.5 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ACCENTS[accent]}`}>
+              {tag}
+            </span>
+          )}
+          <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+        </div>
         {icon && (
-          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${ACCENTS[accent]}`}>{icon}</span>
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${ACCENTS[accent]}`}>{icon}</span>
         )}
       </div>
-      <div className="mt-3 text-3xl font-bold text-gray-900">{value}</div>
+      <div className={`mt-3 text-3xl font-bold ${muted ? "text-gray-300" : "text-gray-900"}`}>{value}</div>
+      {compare && <CompareChip {...compare} />}
       <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-500">
         <span className="font-medium text-gray-400">How: </span>
         {formula}
@@ -50,6 +74,48 @@ export function MetricCard({
     </Link>
   ) : (
     inner
+  );
+}
+
+/**
+ * "▲ 12.4% vs 2026-06 (EGP 121,300)" — the change against the comparison
+ * period. Green = better, rose = worse (flipped when `inverse`). A previous
+ * value of 0 has no meaningful percentage, so only the direction is shown.
+ */
+function CompareChip({
+  current,
+  previous,
+  label,
+  format,
+  inverse,
+}: {
+  current: number;
+  previous: number;
+  label: string;
+  format: (n: number) => string;
+  inverse?: boolean;
+}) {
+  const diff = current - previous;
+  const flat = Math.abs(diff) < 0.005;
+  const pct = previous !== 0 ? Math.abs(diff / previous) : null;
+  const better = inverse ? diff < 0 : diff > 0;
+  const tone = flat
+    ? "bg-gray-50 text-gray-500"
+    : better
+    ? "bg-emerald-50 text-emerald-700"
+    : "bg-rose-50 text-rose-700";
+  const arrow = flat ? "—" : diff > 0 ? "▲" : "▼";
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold ${tone}`}>
+        {arrow}
+        {flat ? "no change" : pct === null ? format(Math.abs(diff)) : `${(pct * 100).toFixed(1)}%`}
+      </span>
+      <span className="text-gray-400">
+        vs {label} · {format(previous)}
+      </span>
+    </div>
   );
 }
 

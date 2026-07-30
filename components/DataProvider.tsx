@@ -10,7 +10,7 @@ import {
   ReactNode,
 } from "react";
 import { createBrowserClient } from "@/lib/supabase";
-import { currentMonth, monthBounds, isFullMonth } from "@/lib/format";
+import { currentMonth, monthBounds, isFullMonth, toISODate } from "@/lib/format";
 import { computeAggregate, Aggregate } from "@/lib/metrics";
 import type { DailyMetric, ChannelSales, BestSeller } from "@/lib/types";
 
@@ -31,6 +31,34 @@ interface MonthlyTraffic {
   reached_checkout: number;
 }
 
+/** Totals for the comparison period, so each KPI can show a vs-last-month delta. */
+export interface PrevPeriod {
+  label: string; // "2026-06" for a full month, else "2026-06-24 → 2026-06-30"
+  salesAfter: number;
+  orders: number;
+  offlineAmount: number;
+  offlineInvoices: number;
+  abandonedCount: number;
+}
+
+/**
+ * The period each KPI is compared against: the previous calendar month when the
+ * selected range is exactly one month, otherwise the equally-long window
+ * immediately before it (so a 7-day range compares to the 7 days before it).
+ */
+function previousRange(start: string, end: string): { start: string; end: string } {
+  const s = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  if (isFullMonth(start, end)) {
+    const pm = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() - 1, 1));
+    return monthBounds(`${pm.getUTCFullYear()}-${String(pm.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  const days = Math.round((e.getTime() - s.getTime()) / 86_400_000) + 1;
+  const pEnd = new Date(s.getTime() - 86_400_000);
+  const pStart = new Date(pEnd.getTime() - (days - 1) * 86_400_000);
+  return { start: toISODate(pStart), end: toISODate(pEnd) };
+}
+
 interface DashState {
   month: string;
   setMonth: (m: string) => void;
@@ -44,9 +72,10 @@ interface DashState {
   monthlyTraffic: MonthlyTraffic | null;
   abandonedCount: number; // real Shopify abandoned checkouts in the month
   abandonedValue: number;
-  offlineAmount: number; // Odoo استهلاكي sales in range
+  offlineAmount: number; // Odoo استهلاكي sales in range (net of refunds)
   offlineInvoices: number;
   offlineDaily: { day: string; amount: number; invoices: number }[]; // per-day Odoo
+  prev: PrevPeriod | null; // comparison period (see previousRange)
   agg: Aggregate;
   days: string[];
   lastSync: string | null;
@@ -87,6 +116,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [offlineDaily, setOfflineDaily] = useState<
     { day: string; amount: number; invoices: number }[]
   >([]);
+  const [prev, setPrev] = useState<PrevPeriod | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +127,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const [mRes, cRes, bRes, tRes, mtRes, sRes, oRes] = await Promise.all([
+      const pr = previousRange(start, end);
+      const [mRes, cRes, bRes, tRes, mtRes, sRes, oRes, pmRes, poRes] = await Promise.all([
         supabase.from("daily_metrics").select("*").gte("day", start).lte("day", end).order("day"),
         supabase
           .from("daily_orders_by_channel")
@@ -117,6 +148,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
           .select("day,amount,invoices")
           .gte("day", start)
           .lte("day", end),
+        // --- comparison period (previous month / preceding window) ---
+        supabase.from("daily_metrics").select("*").gte("day", pr.start).lte("day", pr.end).order("day"),
+        supabase.from("offline_sales").select("day,amount,invoices").gte("day", pr.start).lte("day", pr.end),
       ]);
       if (mRes.error) throw mRes.error;
       if (cRes.error) throw cRes.error;
@@ -135,20 +169,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
         off.map((r) => ({ day: r.day, amount: Number(r.amount || 0), invoices: Number(r.invoices || 0) }))
       );
 
+      // Comparison-period totals (abandoned is filled in below, once fetched).
+      const prevAgg = computeAggregate((pmRes.data as DailyMetric[]) ?? []);
+      const prevOff = (poRes.data as { amount: number; invoices: number }[]) ?? [];
+      const prevBase = {
+        label: isFullMonth(pr.start, pr.end) ? pr.start.slice(0, 7) : `${pr.start} → ${pr.end}`,
+        salesAfter: Number(prevAgg.total_sales) || 0,
+        orders: prevAgg.orders_count,
+        offlineAmount: prevOff.reduce((s, r) => s + Number(r.amount || 0), 0),
+        offlineInvoices: prevOff.reduce((s, r) => s + Number(r.invoices || 0), 0),
+      };
+
       // Real abandoned checkouts from Shopify, filtered to the selected month.
       try {
         const abRes = await fetch("/api/abandoned?summary=1");
         const abJson = await abRes.json();
         const list: { created_at: string; total_price: number }[] = abJson.checkouts ?? [];
-        const inMonth = list.filter((c) => {
-          const d = (c.created_at || "").slice(0, 10);
-          return d >= start && d <= end;
-        });
+        const within = (a: string, b: string) =>
+          list.filter((c) => {
+            const d = (c.created_at || "").slice(0, 10);
+            return d >= a && d <= b;
+          });
+        const inMonth = within(start, end);
         setAbandonedCount(inMonth.length);
         setAbandonedValue(inMonth.reduce((s, c) => s + Number(c.total_price || 0), 0));
+        setPrev({ ...prevBase, abandonedCount: within(pr.start, pr.end).length });
       } catch {
         setAbandonedCount(0);
         setAbandonedValue(0);
+        setPrev({ ...prevBase, abandonedCount: 0 });
       }
     } catch (e) {
       setError((e as Error).message);
@@ -195,6 +244,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     offlineAmount,
     offlineInvoices,
     offlineDaily,
+    prev,
     agg,
     days,
     lastSync,
