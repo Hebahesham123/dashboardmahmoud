@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
+import { shiftMonth } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -26,16 +27,6 @@ function ymd(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Same day-of-month, `delta` months away — clamped to the last day when the
- * target month is shorter (31 Mar − 1 month = 28/29 Feb, not 3 Mar).
- */
-function shiftMonth(iso: string, delta: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const t = new Date(Date.UTC(y, m - 1 + delta, 1));
-  const lastDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
-  return ymd(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), Math.min(d, lastDay))));
-}
 
 export async function GET(req: NextRequest) {
   try {

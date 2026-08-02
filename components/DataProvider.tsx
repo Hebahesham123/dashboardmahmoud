@@ -10,7 +10,7 @@ import {
   ReactNode,
 } from "react";
 import { createBrowserClient } from "@/lib/supabase";
-import { currentMonth, monthBounds, isFullMonth, toISODate } from "@/lib/format";
+import { monthBounds, isFullMonth, monthToDate, shiftMonth } from "@/lib/format";
 import { computeAggregate, Aggregate } from "@/lib/metrics";
 import type { DailyMetric, ChannelSales, BestSeller } from "@/lib/types";
 
@@ -42,21 +42,12 @@ export interface PrevPeriod {
 }
 
 /**
- * The period each KPI is compared against: the previous calendar month when the
- * selected range is exactly one month, otherwise the equally-long window
- * immediately before it (so a 7-day range compares to the 7 days before it).
+ * The period each KPI is compared against: the SAME filter dates one month
+ * back. Picking 1–2 Aug compares against 1–2 Jul, so the comparison covers the
+ * same stretch of the month rather than a full month the selection can't reach.
  */
 function previousRange(start: string, end: string): { start: string; end: string } {
-  const s = new Date(`${start}T00:00:00Z`);
-  const e = new Date(`${end}T00:00:00Z`);
-  if (isFullMonth(start, end)) {
-    const pm = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() - 1, 1));
-    return monthBounds(`${pm.getUTCFullYear()}-${String(pm.getUTCMonth() + 1).padStart(2, "0")}`);
-  }
-  const days = Math.round((e.getTime() - s.getTime()) / 86_400_000) + 1;
-  const pEnd = new Date(s.getTime() - 86_400_000);
-  const pStart = new Date(pEnd.getTime() - (days - 1) * 86_400_000);
-  return { start: toISODate(pStart), end: toISODate(pEnd) };
+  return { start: shiftMonth(start, -1), end: shiftMonth(end, -1) };
 }
 
 interface DashState {
@@ -94,9 +85,8 @@ export function useDash() {
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const supabase = useMemo(() => createBrowserClient(), []);
-  const [range, setRangeState] = useState<{ start: string; end: string }>(() =>
-    monthBounds(currentMonth())
-  );
+  // Default: 1st of this month → today (not a future end-of-month).
+  const [range, setRangeState] = useState<{ start: string; end: string }>(() => monthToDate());
   const month = range.start.slice(0, 7);
   const setMonth = useCallback((m: string) => setRangeState(monthBounds(m)), []);
   const setRange = useCallback((start: string, end: string) => {
@@ -226,7 +216,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [metrics, monthlyTraffic, fullMonth]);
   const days = useMemo(() => metrics.map((m) => m.day), [metrics]);
 
-  const rangeLabel = fullMonth ? month : `${start} → ${end}`;
+  // "2026-08 (1–2)" for a month-to-date window, so the header stays readable.
+  const monthToDateRange = start.endsWith("-01") && start.slice(0, 7) === end.slice(0, 7);
+  const rangeLabel = fullMonth
+    ? month
+    : monthToDateRange
+    ? `${month} (1–${Number(end.slice(8))})`
+    : `${start} → ${end}`;
 
   const value: DashState = {
     month,

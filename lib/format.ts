@@ -40,6 +40,24 @@ export function monthBounds(month: string): { start: string; end: string } {
   return { start: toISODate(start), end: toISODate(end) };
 }
 
+/** First day of the current month → today (month-to-date). */
+export function monthToDate(): { start: string; end: string } {
+  const now = new Date();
+  return { start: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), end: toISODate(now) };
+}
+
+/**
+ * Same day-of-month, `delta` months away — clamped to the last day when the
+ * target month is shorter (31 Mar − 1 month = 28 Feb, not 3 Mar). Used to line
+ * a comparison period up with the selected filter dates.
+ */
+export function shiftMonth(iso: string, delta: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(y, m - 1 + delta, 1);
+  const lastDay = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+  return toISODate(new Date(t.getFullYear(), t.getMonth(), Math.min(d, lastDay)));
+}
+
 export type RangePreset =
   | "today"
   | "yesterday"
@@ -91,7 +109,8 @@ export function rangeForPreset(key: RangePreset): { start: string; end: string }
       return { start: `${now.getFullYear()}-01-01`, end: d(now) };
     case "this_month":
     default:
-      return monthBounds(currentMonth());
+      // Month-to-date: ending on today rather than on a future end-of-month.
+      return monthToDate();
   }
 }
 
