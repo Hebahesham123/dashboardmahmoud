@@ -12,8 +12,17 @@ interface SummaryResp {
   channels: { label: string; type: "Branches" | "Online" }[];
   period: Block;
   mtd: Block;
-  lastMonth: Block;
-  meta: { from: string; to: string; single: boolean };
+  lastMonth: Block; // same day / same range, one month back
+  lastMonthMtd: Block; // last month measured to the same day of the month
+  meta: {
+    from: string;
+    to: string;
+    lmFrom: string;
+    lmTo: string;
+    lmStart: string;
+    lmMtdEnd: string;
+    single: boolean;
+  };
 }
 
 function todayStr() {
@@ -74,6 +83,14 @@ export default function SummaryPage() {
       ? data.meta.from
       : `${data.meta.from} → ${data.meta.to}`
     : "";
+  // The same day/range one month back — what the "Last Month" rows now show.
+  const lastMonthLabel = data
+    ? data.meta.single
+      ? data.meta.lmFrom
+      : `${data.meta.lmFrom} → ${data.meta.lmTo}`
+    : "";
+  // Last month up to the same day of the month — what MTD is compared against.
+  const lastMonthMtdLabel = data ? `${data.meta.lmStart} → ${data.meta.lmMtdEnd}` : "";
 
   // Average order value (MTD) per column = value / orders.
   const aov: Block = useMemo(() => {
@@ -157,11 +174,23 @@ export default function SummaryPage() {
               />
               <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" />
               <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" />
-              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonth} />
-              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonth} />
+              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} />
+              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} />
               <DataRow label="Avg Order Value" cols={cols} block={aov} kind="value" accent />
-              <DataRow label="Orders Last Month" cols={cols} block={data.lastMonth} kind="orders" muted />
-              <DataRow label="Amount Last Month" cols={cols} block={data.lastMonth} kind="value" muted />
+              <DataRow
+                label={<>Orders Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
+                cols={cols}
+                block={data.lastMonth}
+                kind="orders"
+                muted
+              />
+              <DataRow
+                label={<>Amount Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
+                cols={cols}
+                block={data.lastMonth}
+                kind="value"
+                muted
+              />
             </tbody>
           </table>
         </div>
@@ -170,9 +199,10 @@ export default function SummaryPage() {
       {/* Legend */}
       {data && (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
-          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> MTD above last month</span>
-          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below last month</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> MTD above {lastMonthMtdLabel}</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = MTD value ÷ orders</span>
+          <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>
       )}

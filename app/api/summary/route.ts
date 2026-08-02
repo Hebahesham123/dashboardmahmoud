@@ -26,6 +26,17 @@ function ymd(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Same day-of-month, `delta` months away — clamped to the last day when the
+ * target month is shorter (31 Mar − 1 month = 28/29 Feb, not 3 Mar).
+ */
+function shiftMonth(iso: string, delta: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + delta, 1));
+  const lastDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  return ymd(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), Math.min(d, lastDay))));
+}
+
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
@@ -38,9 +49,17 @@ export async function GET(req: NextRequest) {
     const monthStart = `${ey}-${String(em).padStart(2, "0")}-01`;
     const lm = new Date(Date.UTC(ey, em - 2, 1)); // previous month
     const lmStart = ymd(new Date(Date.UTC(lm.getUTCFullYear(), lm.getUTCMonth(), 1)));
-    const lmEnd = ymd(new Date(Date.UTC(lm.getUTCFullYear(), lm.getUTCMonth() + 1, 0)));
 
-    const fetchFrom = [from, monthStart, lmStart].sort()[0];
+    // "Last month" = the SAME day (or the same range) one month back — not the
+    // whole month. Picking 2 Aug compares against 2 Jul, so the row is a like
+    // for like figure rather than a 31-day total the day can never reach.
+    const lmFrom = shiftMonth(from, -1);
+    const lmTo = shiftMonth(to, -1);
+    // MTD, however, needs last month measured to the same point in the month,
+    // so "MTD vs last month" compares 1–2 Jul against 1–2 Aug.
+    const lmMtdEnd = lmTo;
+
+    const fetchFrom = [from, monthStart, lmStart, lmFrom].sort()[0];
     const sb = createServiceClient();
 
     // --- Branches: pre-aggregated per-day/branch (offline_branch_sales).
@@ -109,8 +128,18 @@ export async function GET(req: NextRequest) {
       channels,
       period: periodAgg(from, to),
       mtd: periodAgg(monthStart, to),
-      lastMonth: periodAgg(lmStart, lmEnd),
-      meta: { from, to, monthStart, lmStart, lmEnd, single: from === to },
+      lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
+      lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
+      meta: {
+        from,
+        to,
+        monthStart,
+        lmFrom,
+        lmTo,
+        lmStart,
+        lmMtdEnd,
+        single: from === to,
+      },
     });
   } catch (err) {
     return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
