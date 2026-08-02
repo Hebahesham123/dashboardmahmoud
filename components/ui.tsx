@@ -24,6 +24,7 @@ export function MetricCard({
   tag,
   muted,
   compare,
+  sub,
 }: {
   label: string;
   value: string;
@@ -35,6 +36,8 @@ export function MetricCard({
   tag?: string;
   /** Dim the value, for a not-applicable metric. */
   muted?: boolean;
+  /** Second figure shown beside the value — e.g. the rate next to a count. */
+  sub?: string;
   /** Comparison vs the previous period — renders a ▲/▼ % chip under the value. */
   compare?: {
     current: number;
@@ -60,7 +63,12 @@ export function MetricCard({
           <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${ACCENTS[accent]}`}>{icon}</span>
         )}
       </div>
-      <div className={`mt-3 text-3xl font-bold ${muted ? "text-gray-300" : "text-gray-900"}`}>{value}</div>
+      <div className={`mt-3 flex flex-wrap items-baseline gap-x-2 text-3xl font-bold ${muted ? "text-gray-300" : "text-gray-900"}`}>
+        {value}
+        {sub && (
+          <span className={`text-lg font-semibold ${muted ? "text-gray-300" : "text-gray-400"}`}>{sub}</span>
+        )}
+      </div>
       {compare && <CompareChip {...compare} />}
       <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-500">
         <span className="font-medium text-gray-400">How: </span>

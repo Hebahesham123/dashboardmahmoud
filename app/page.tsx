@@ -152,6 +152,7 @@ export default function OverviewPage() {
             tag="Online"
             label="Abandoned Checkout"
             value={fmtNum(abandonedCount)}
+            sub={fmtPct(abandoned)}
             accent="amber"
             icon="🛒"
             href="/abandoned"
