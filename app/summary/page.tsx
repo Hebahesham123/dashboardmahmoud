@@ -38,6 +38,18 @@ const money = (n: number) => fmtNum(Math.round(n));
 // Uniform brown gridline on every cell.
 const BORDER = "border border-[#8a5730]";
 
+/**
+ * Row-label colours. A metric and the last-month row it is measured against
+ * share one tint, so it is obvious at a glance which rows form a pair. The
+ * selected-date rows keep the base brown — nothing is compared against them.
+ */
+const TINT = {
+  date: "bg-[#6f4423]", // Orders / Value for the picked day or range
+  orders: "bg-[#2f5d5b]", // MTD Orders  ↔  Orders Last Month
+  value: "bg-[#7a3f5d]", // MTD Value   ↔  Amount Last Month
+  aov: "bg-[#4a5588]", // Avg Order Value  ↔  Avg Order Value Last Month
+} as const;
+
 export default function SummaryPage() {
   const [mode, setMode] = useState<"day" | "range">("day");
   const [day, setDay] = useState(todayStr());
@@ -176,17 +188,18 @@ export default function SummaryPage() {
                 render={(c) => (c === "Total" ? "All" : c)}
                 strong
               />
-              <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" />
-              <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" />
-              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} />
-              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} />
-              <DataRow label="Avg Order Value" cols={cols} block={aov} kind="value" accent />
+              <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" tint={TINT.date} />
+              <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" tint={TINT.date} />
+              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.orders} />
+              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.value} />
+              <DataRow label="Avg Order Value" cols={cols} block={aov} kind="value" accent tint={TINT.aov} />
               <DataRow
                 label={<>Orders Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
                 cols={cols}
                 block={data.lastMonth}
                 kind="orders"
                 muted
+                tint={TINT.orders}
               />
               <DataRow
                 label={<>Amount Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
@@ -194,6 +207,7 @@ export default function SummaryPage() {
                 block={data.lastMonth}
                 kind="value"
                 muted
+                tint={TINT.value}
               />
               <DataRow
                 label={<>Avg Order Value Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
@@ -201,6 +215,7 @@ export default function SummaryPage() {
                 block={aovLastMonth}
                 kind="value"
                 accent
+                tint={TINT.aov}
               />
             </tbody>
           </table>
@@ -214,6 +229,12 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders (MTD, and the last-month row for {lastMonthLabel})</span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
+          <span className="inline-flex items-center gap-1">
+            · Row-label colour pairs a metric with the row it is compared against:
+            <span className={`ml-0.5 inline-block h-2.5 w-2.5 rounded-sm ${TINT.orders}`} /> orders
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aov}`} /> avg order value
+          </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>
       )}
@@ -257,6 +278,7 @@ function DataRow({
   compareBlock,
   accent,
   muted,
+  tint = "bg-[#6f4423]",
 }: {
   label: React.ReactNode;
   cols: string[];
@@ -265,10 +287,11 @@ function DataRow({
   compareBlock?: Block; // green if > last month, red if less
   accent?: boolean; // Avg Order Value highlight
   muted?: boolean; // last-month rows
+  tint?: string; // label-cell colour, shared with this row's comparison row
 }) {
   return (
     <tr>
-      <th className={`${BORDER} bg-[#6f4423] px-2 py-2.5 text-left align-middle font-semibold text-white sm:px-4 ${accent ? "italic" : ""}`}>
+      <th className={`${BORDER} ${tint} px-2 py-2.5 text-left align-middle font-semibold text-white sm:px-4 ${accent ? "italic" : ""}`}>
         {label}
       </th>
       {cols.map((c) => {
