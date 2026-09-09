@@ -89,13 +89,24 @@ export async function GET(req: NextRequest) {
     // so this stays a small read even over a two-month window. ---
     const { data: cbRows } = await sb
       .from("orders")
-      .select("order_date,codes:raw->discount_codes")
+      .select("order_date,net_sales,codes:raw->discount_codes")
       .eq("channel", "online")
       .gte("order_date", fetchFrom)
       .lte("order_date", to);
-    const cashbackDays = ((cbRows ?? []) as { order_date: string; codes: { code?: string }[] | null }[])
-      .filter((o) => (o.codes ?? []).some((d) => CASHBACK_RE.test((d?.code ?? "").trim())))
-      .map((o) => (o.order_date ?? "").slice(0, 10));
+    // One entry per redeeming order: the day, what it sold for (net of
+    // refunds, like every other Value row) and how much cashback it burned.
+    type CbRow = { order_date: string; net_sales: number; codes: { code?: string; amount?: string }[] | null };
+    const cashbackOrders = ((cbRows ?? []) as CbRow[])
+      .map((o) => {
+        const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
+        return {
+          day: (o.order_date ?? "").slice(0, 10),
+          value: Number(o.net_sales || 0),
+          redeemed: hits.reduce((s, d) => s + Number(d.amount || 0), 0),
+          hit: hits.length > 0,
+        };
+      })
+      .filter((o) => o.hit);
 
     // Channels: physical branches (sorted) first, then Website (online).
     const branchLabels = [...new Set(branchRows.map((r) => r.label))].sort((a, b) => a.localeCompare(b));
@@ -139,12 +150,16 @@ export async function GET(req: NextRequest) {
     };
 
     // Cashback-redeeming orders are website-only; branches have no such codes.
+    // `value` is what those orders sold for; `redeemed` is the cashback spent.
     const cashbackAgg = (pf: string, pt: string) => {
-      const n = cashbackDays.filter((d) => d >= pf && d <= pt).length;
-      const out: Record<string, { orders: number; value: number }> = {};
-      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
-      out[WEBSITE] = { orders: n, value: n };
-      out.Total = { orders: n, value: n };
+      const hits = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
+      const orders = hits.length;
+      const value = hits.reduce((s, o) => s + o.value, 0);
+      const redeemed = hits.reduce((s, o) => s + o.redeemed, 0);
+      const out: Record<string, { orders: number; value: number; redeemed: number }> = {};
+      for (const label of branchLabels) out[label] = { orders: 0, value: 0, redeemed: 0 };
+      out[WEBSITE] = { orders, value, redeemed };
+      out.Total = { orders, value, redeemed };
       return out;
     };
 

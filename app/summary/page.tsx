@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { fmtNum } from "@/lib/format";
 
-type Cell = { orders: number; value: number };
+type Cell = { orders: number; value: number; redeemed?: number };
 type Block = Record<string, Cell>;
 interface SummaryResp {
   ok: boolean;
@@ -262,10 +262,42 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
+                label={<>Value of Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                block={data.cashback}
+                kind="value"
+                compareBlock={data.cashbackLastMonth}
+                tint={TINT.cashback}
+              />
+              <DataRow
+                label={<>Cashback Redeemed <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                block={data.cashback}
+                kind="redeemed"
+                compareBlock={data.cashbackLastMonth}
+                tint={TINT.cashback}
+              />
+              <DataRow
                 label={<>Orders from Cashback Code <span className="font-normal opacity-80">MTD</span></>}
                 cols={cols}
                 block={data.cashbackMtd}
                 kind="orders"
+                muted
+                tint={TINT.cashback}
+              />
+              <DataRow
+                label={<>Value of Cashback Orders <span className="font-normal opacity-80">MTD</span></>}
+                cols={cols}
+                block={data.cashbackMtd}
+                kind="value"
+                muted
+                tint={TINT.cashback}
+              />
+              <DataRow
+                label={<>Cashback Redeemed <span className="font-normal opacity-80">MTD</span></>}
+                cols={cols}
+                block={data.cashbackMtd}
+                kind="redeemed"
                 muted
                 tint={TINT.cashback}
               />
@@ -280,7 +312,10 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> MTD above {lastMonthMtdLabel}</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
-          <span>· Orders from Cashback Code = website orders redeeming a cashback voucher (branches issue none)</span>
+          <span>
+            · Cashback rows = website orders redeeming a cashback voucher (branches issue none): how many, what they
+            sold for, and how much cashback they burned
+          </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
             · Row-label colour pairs a metric with the row it is compared against:
@@ -338,7 +373,7 @@ function DataRow({
   label: React.ReactNode;
   cols: string[];
   block: Block;
-  kind: "orders" | "value";
+  kind: "orders" | "value" | "redeemed"; // redeemed = cashback spent on the order
   compareBlock?: Block; // green if > last month, red if less
   accent?: boolean; // Avg Order Value highlight
   muted?: boolean; // last-month rows
@@ -350,13 +385,13 @@ function DataRow({
         {label}
       </th>
       {cols.map((c) => {
-        const cell = block[c];
-        const v = cell ? (kind === "orders" ? cell.orders : cell.value) : 0;
+        const pick = (m: Cell | undefined) =>
+          !m ? 0 : kind === "orders" ? m.orders : kind === "redeemed" ? m.redeemed ?? 0 : m.value;
+        const v = pick(block[c]);
         const isTotal = c === "Total";
         let cls = "bg-white text-gray-800";
         if (compareBlock) {
-          const cc = compareBlock[c];
-          const cv = cc ? (kind === "orders" ? cc.orders : cc.value) : 0;
+          const cv = pick(compareBlock[c]);
           if (v > cv) cls = isTotal ? "bg-emerald-600 font-bold text-white" : "bg-emerald-50 font-semibold text-emerald-700";
           else if (v < cv) cls = isTotal ? "bg-rose-600 font-bold text-white" : "bg-rose-50 font-semibold text-rose-700";
           else cls = isTotal ? "bg-[#e7dccb] font-bold text-[#4a2f16]" : "bg-white text-gray-800";
