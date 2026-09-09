@@ -14,6 +14,9 @@ interface SummaryResp {
   mtd: Block;
   lastMonth: Block; // same day / same range, one month back
   lastMonthMtd: Block; // last month measured to the same day of the month
+  cashback: Block; // orders redeeming a cashback code — selected day/range
+  cashbackMtd: Block; // …month to date
+  cashbackLastMonth: Block; // …the same day/range one month back
   meta: {
     from: string;
     to: string;
@@ -47,7 +50,9 @@ const TINT = {
   date: "bg-[#6f4423]", // Orders / Value for the picked day or range
   orders: "bg-[#2f5d5b]", // MTD Orders  ↔  Orders Last Month
   value: "bg-[#7a3f5d]", // MTD Value   ↔  Amount Last Month
-  aov: "bg-[#4a5588]", // Avg Order Value  ↔  Avg Order Value Last Month
+  aovDay: "bg-[#4a5588]", // Avg Order Value / day  ↔  its last-month row
+  aovMonth: "bg-[#3c6f8c]", // Avg Order Value / month (MTD) ↔ last month MTD
+  cashback: "bg-[#7c5320]", // Orders from a cashback discount code
 } as const;
 
 export default function SummaryPage() {
@@ -113,11 +118,17 @@ export default function SummaryPage() {
     }
     return out;
   };
-  // MTD, and the same day/range one month back (the "Last Month" rows).
+  // Per day (the picked day/range), per month (MTD), and the two windows each
+  // is measured against: the same day/range one month back, and last month to
+  // the same day of the month.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const aov: Block = useMemo(() => aovOf(data?.mtd), [data]);
+  const aovDay: Block = useMemo(() => aovOf(data?.period), [data]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const aovMonth: Block = useMemo(() => aovOf(data?.mtd), [data]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aovLastMonth: Block = useMemo(() => aovOf(data?.lastMonth), [data]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const aovLastMonthMtd: Block = useMemo(() => aovOf(data?.lastMonthMtd), [data]);
 
   return (
     <div>
@@ -190,9 +201,26 @@ export default function SummaryPage() {
               />
               <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" tint={TINT.date} />
               <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" tint={TINT.date} />
+              <DataRow
+                label={<>Avg Order Value <span className="font-normal opacity-80">per {data.meta.single ? "day" : "range"} · {periodLabel}</span></>}
+                cols={cols}
+                block={aovDay}
+                kind="value"
+                compareBlock={aovLastMonth}
+                accent
+                tint={TINT.aovDay}
+              />
               <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.orders} />
               <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.value} />
-              <DataRow label="Avg Order Value" cols={cols} block={aov} kind="value" accent tint={TINT.aov} />
+              <DataRow
+                label={<>Avg Order Value <span className="font-normal opacity-80">per month · MTD</span></>}
+                cols={cols}
+                block={aovMonth}
+                kind="value"
+                compareBlock={aovLastMonthMtd}
+                accent
+                tint={TINT.aovMonth}
+              />
               <DataRow
                 label={<>Orders Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
                 cols={cols}
@@ -210,12 +238,36 @@ export default function SummaryPage() {
                 tint={TINT.value}
               />
               <DataRow
-                label={<>Avg Order Value Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
+                label={<>Avg Order Value per {data.meta.single ? "day" : "range"} Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
                 cols={cols}
                 block={aovLastMonth}
                 kind="value"
                 accent
-                tint={TINT.aov}
+                tint={TINT.aovDay}
+              />
+              <DataRow
+                label={<>Avg Order Value per month Last Month <span className="font-normal opacity-80">{lastMonthMtdLabel}</span></>}
+                cols={cols}
+                block={aovLastMonthMtd}
+                kind="value"
+                accent
+                tint={TINT.aovMonth}
+              />
+              <DataRow
+                label={<>Orders from Cashback Code <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                block={data.cashback}
+                kind="orders"
+                compareBlock={data.cashbackLastMonth}
+                tint={TINT.cashback}
+              />
+              <DataRow
+                label={<>Orders from Cashback Code <span className="font-normal opacity-80">MTD</span></>}
+                cols={cols}
+                block={data.cashbackMtd}
+                kind="orders"
+                muted
+                tint={TINT.cashback}
               />
             </tbody>
           </table>
@@ -227,13 +279,16 @@ export default function SummaryPage() {
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> MTD above {lastMonthMtdLabel}</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
-          <span>· Avg Order Value = value ÷ orders (MTD, and the last-month row for {lastMonthLabel})</span>
+          <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
+          <span>· Orders from Cashback Code = website orders redeeming a cashback voucher (branches issue none)</span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
             · Row-label colour pairs a metric with the row it is compared against:
             <span className={`ml-0.5 inline-block h-2.5 w-2.5 rounded-sm ${TINT.orders}`} /> orders
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aov}`} /> avg order value
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovDay}`} /> avg order value / {data.meta.single ? "day" : "range"}
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovMonth}`} /> avg order value / month
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback orders
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>

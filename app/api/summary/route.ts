@@ -27,6 +27,17 @@ function ymd(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Cashback discount codes. The loyalty app issues a one-off voucher per
+ * customer whose code is an auto-generated "044d-4fc8-42c8" triplet, unlike
+ * the hand-made marketing codes (NS-15H, HomeVIP, …). Set
+ * CASHBACK_CODE_PATTERN to override the match without touching this file.
+ */
+const CASHBACK_RE = new RegExp(
+  process.env.CASHBACK_CODE_PATTERN || "^[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}$|cashback",
+  "i"
+);
+
 
 export async function GET(req: NextRequest) {
   try {
@@ -73,6 +84,19 @@ export async function GET(req: NextRequest) {
       .lte("day", to);
     const online = (dmRows ?? []) as { day: string; total_sales: number; orders_count: number }[];
 
+    // --- Cashback: website orders redeeming an auto-issued cashback voucher.
+    // Only the discount_codes slice of the raw Shopify payload is projected,
+    // so this stays a small read even over a two-month window. ---
+    const { data: cbRows } = await sb
+      .from("orders")
+      .select("order_date,codes:raw->discount_codes")
+      .eq("channel", "online")
+      .gte("order_date", fetchFrom)
+      .lte("order_date", to);
+    const cashbackDays = ((cbRows ?? []) as { order_date: string; codes: { code?: string }[] | null }[])
+      .filter((o) => (o.codes ?? []).some((d) => CASHBACK_RE.test((d?.code ?? "").trim())))
+      .map((o) => (o.order_date ?? "").slice(0, 10));
+
     // Channels: physical branches (sorted) first, then Website (online).
     const branchLabels = [...new Set(branchRows.map((r) => r.label))].sort((a, b) => a.localeCompare(b));
     const channels = [
@@ -114,6 +138,16 @@ export async function GET(req: NextRequest) {
       return out;
     };
 
+    // Cashback-redeeming orders are website-only; branches have no such codes.
+    const cashbackAgg = (pf: string, pt: string) => {
+      const n = cashbackDays.filter((d) => d >= pf && d <= pt).length;
+      const out: Record<string, { orders: number; value: number }> = {};
+      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
+      out[WEBSITE] = { orders: n, value: n };
+      out.Total = { orders: n, value: n };
+      return out;
+    };
+
     return NextResponse.json({
       ok: true,
       channels,
@@ -121,6 +155,9 @@ export async function GET(req: NextRequest) {
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
+      cashback: cashbackAgg(from, to), // orders using a cashback code, this period
+      cashbackMtd: cashbackAgg(monthStart, to),
+      cashbackLastMonth: cashbackAgg(lmFrom, lmTo),
       meta: {
         from,
         to,
