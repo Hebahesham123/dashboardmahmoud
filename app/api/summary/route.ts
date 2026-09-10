@@ -93,27 +93,22 @@ export async function GET(req: NextRequest) {
       .eq("channel", "online")
       .gte("order_date", fetchFrom)
       .lte("order_date", to);
-    // One entry per redeeming order: the day, what the order was worth before
-    // any discount (total_price is already net of them, so add them back) and
-    // how much cashback it burned. Pre-discount keeps this comparable with the
-    // branches' invoice_amount; what was actually collected is value - redeemed.
+    // One entry per redeeming order: the day and what the order was worth
+    // before any discount (total_price is already net of them, so add them
+    // back). Pre-discount keeps this comparable with the branches'
+    // invoice_amount, which is likewise the invoice the 5% was taken from.
     type CbRow = {
       order_date: string;
       total_price: number;
       total_discounts: number;
-      codes: { code?: string; amount?: string }[] | null;
+      codes: { code?: string }[] | null;
     };
     const cashbackOrders = ((cbRows ?? []) as CbRow[])
-      .map((o) => {
-        const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
-        return {
-          day: (o.order_date ?? "").slice(0, 10),
-          value: Number(o.total_price || 0) + Number(o.total_discounts || 0),
-          redeemed: hits.reduce((s, d) => s + Number(d.amount || 0), 0),
-          hit: hits.length > 0,
-        };
-      })
-      .filter((o) => o.hit);
+      .filter((o) => (o.codes ?? []).some((d) => CASHBACK_RE.test((d?.code ?? "").trim())))
+      .map((o) => ({
+        day: (o.order_date ?? "").slice(0, 10),
+        value: Number(o.total_price || 0) + Number(o.total_discounts || 0),
+      }));
 
     // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
     // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
@@ -186,42 +181,37 @@ export async function GET(req: NextRequest) {
     // "فرع الاسكندرية-سموحة" would both collapse into Semoha.
     const rawToColumn = new Map(branchRows.map((r) => [r.branch, r.label]));
 
-    // Cashback issued per branch. Columns only exist for branches that also
-    // have sales rows, so Total counts every branch and can exceed their sum.
-    const cashbackIssuedAgg = (pf: string, pt: string) => {
-      const out: Record<string, { orders: number; value: number; redeemed: number }> = {};
-      for (const label of branchLabels) out[label] = { orders: 0, value: 0, redeemed: 0 };
-      out[WEBSITE] = { orders: 0, value: 0, redeemed: 0 }; // the site issues none
+    /**
+     * Cashback orders for one window, offline and online in the same two rows:
+     *  - branch columns = branch orders that earned a voucher (Odoo)
+     *  - Website        = orders that paid with one (Shopify)
+     * `value` is the order before any discount on both sides, so the two are
+     * comparable. Total counts every branch, including the 20-odd that have no
+     * sales rows and so get no column of their own.
+     */
+    const cashbackAgg = (pf: string, pt: string) => {
+      const out: Record<string, { orders: number; value: number }> = {};
+      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
       let tOrders = 0;
       let tValue = 0;
-      let tCashback = 0;
+
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
         tOrders += 1;
         tValue += c.value;
-        tCashback += c.amount;
         const col = rawToColumn.get(c.branch);
         if (col && out[col]) {
           out[col].orders += 1;
           out[col].value += c.value;
-          out[col].redeemed += c.amount;
         }
       }
-      out.Total = { orders: tOrders, value: tValue, redeemed: tCashback };
-      return out;
-    };
 
-    // Cashback-redeeming orders are website-only; branches have no such codes.
-    // `value` is what those orders sold for; `redeemed` is the cashback spent.
-    const cashbackAgg = (pf: string, pt: string) => {
-      const hits = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
-      const orders = hits.length;
-      const value = hits.reduce((s, o) => s + o.value, 0);
-      const redeemed = hits.reduce((s, o) => s + o.redeemed, 0);
-      const out: Record<string, { orders: number; value: number; redeemed: number }> = {};
-      for (const label of branchLabels) out[label] = { orders: 0, value: 0, redeemed: 0 };
-      out[WEBSITE] = { orders, value, redeemed };
-      out.Total = { orders, value, redeemed };
+      const web = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
+      out[WEBSITE] = { orders: web.length, value: web.reduce((s, o) => s + o.value, 0) };
+      tOrders += web.length;
+      tValue += out[WEBSITE].value;
+
+      out.Total = { orders: tOrders, value: tValue };
       return out;
     };
 
@@ -232,12 +222,7 @@ export async function GET(req: NextRequest) {
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
-      cashback: cashbackAgg(from, to), // orders using a cashback code, this period
-      cashbackMtd: cashbackAgg(monthStart, to),
-      cashbackLastMonth: cashbackAgg(lmFrom, lmTo),
-      cashbackIssued: cashbackIssuedAgg(from, to), // coupons earned at branches
-      cashbackIssuedMtd: cashbackIssuedAgg(monthStart, to),
-      cashbackIssuedLastMonth: cashbackIssuedAgg(lmFrom, lmTo),
+      cashback: cashbackAgg(from, to), // cashback orders for the picked day/range
       meta: {
         from,
         to,
