@@ -257,84 +257,26 @@ export default function SummaryPage() {
                 accent
                 tint={TINT.aovMonth}
               />
-              <DataRow
-                label={<>Orders from Cashback Code <span className="font-normal opacity-80">{periodLabel}</span></>}
+              {/* Cashback SPENT — website orders paying with a voucher. */}
+              <CashbackRows
+                title="Cashback Spent"
+                amountLabel="Cashback Used"
                 cols={cols}
                 block={data.cashback}
-                kind="orders"
                 compareBlock={data.cashbackLastMonth}
+                mtdBlock={data.cashbackMtd}
+                periodLabel={periodLabel}
                 tint={TINT.cashback}
               />
-              <DataRow
-                label={<>Value of Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
-                cols={cols}
-                block={data.cashback}
-                kind="value"
-                compareBlock={data.cashbackLastMonth}
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Cashback Redeemed <span className="font-normal opacity-80">{periodLabel}</span></>}
-                cols={cols}
-                block={data.cashback}
-                kind="redeemed"
-                compareBlock={data.cashbackLastMonth}
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Orders from Cashback Code <span className="font-normal opacity-80">MTD</span></>}
-                cols={cols}
-                block={data.cashbackMtd}
-                kind="orders"
-                muted
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Value of Cashback Orders <span className="font-normal opacity-80">MTD</span></>}
-                cols={cols}
-                block={data.cashbackMtd}
-                kind="value"
-                muted
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Cashback Redeemed <span className="font-normal opacity-80">MTD</span></>}
-                cols={cols}
-                block={data.cashbackMtd}
-                kind="redeemed"
-                muted
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Cashback Coupons Issued <span className="font-normal opacity-80">{periodLabel}</span></>}
+              {/* Cashback EARNED — branch orders that generated a voucher. */}
+              <CashbackRows
+                title="Cashback Earned"
+                amountLabel="Cashback Given"
                 cols={cols}
                 block={data.cashbackIssued}
-                kind="orders"
                 compareBlock={data.cashbackIssuedLastMonth}
-                tint={TINT.cashbackIssued}
-              />
-              <DataRow
-                label={<>Cashback Earned <span className="font-normal opacity-80">{periodLabel}</span></>}
-                cols={cols}
-                block={data.cashbackIssued}
-                kind="value"
-                compareBlock={data.cashbackIssuedLastMonth}
-                tint={TINT.cashbackIssued}
-              />
-              <DataRow
-                label={<>Cashback Coupons Issued <span className="font-normal opacity-80">MTD</span></>}
-                cols={cols}
-                block={data.cashbackIssuedMtd}
-                kind="orders"
-                muted
-                tint={TINT.cashbackIssued}
-              />
-              <DataRow
-                label={<>Cashback Earned <span className="font-normal opacity-80">MTD</span></>}
-                cols={cols}
-                block={data.cashbackIssuedMtd}
-                kind="value"
-                muted
+                mtdBlock={data.cashbackIssuedMtd}
+                periodLabel={periodLabel}
                 tint={TINT.cashbackIssued}
               />
             </tbody>
@@ -349,12 +291,13 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback Redeemed rows = website orders spending a voucher (branches issue none): how many, what they sold
-            for, and how much cashback they burned
+            · Cashback Spent = website orders paying with a voucher · Cashback Earned = branch orders that generated one
+            (5% of the invoice). Order Value is the order before any discount, so what was actually collected on a spent
+            order is Order Value − Cashback Used.
           </span>
           <span>
-            · Cashback Issued/Earned rows = vouchers earned at the branches (5% of the invoice). Only branches that also
-            have sales rows get a column, so Total covers every branch and can exceed the columns beside it.
+            · Cashback is earned at 20+ branches but only branches that also have sales rows get a column, so Cashback
+            Earned Total covers every branch and can exceed the columns beside it.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
@@ -363,7 +306,7 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovDay}`} /> avg order value / {data.meta.single ? "day" : "range"}
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovMonth}`} /> avg order value / month
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback redeemed
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback spent
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashbackIssued}`} /> cashback earned
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
@@ -451,5 +394,63 @@ function DataRow({
         );
       })}
     </tr>
+  );
+}
+
+/**
+ * One cashback block: how many orders, what those orders were worth, and the
+ * cashback itself — for the picked day/range (coloured against the same window
+ * one month back) and again for the month to date. Both sides of cashback read
+ * the same way, so they share this.
+ */
+function CashbackRows({
+  title,
+  amountLabel,
+  cols,
+  block,
+  compareBlock,
+  mtdBlock,
+  periodLabel,
+  tint,
+}: {
+  title: string;
+  amountLabel: string; // "Cashback Used" when spent, "Cashback Given" when earned
+  cols: string[];
+  block: Block;
+  compareBlock: Block;
+  mtdBlock: Block;
+  periodLabel: string;
+  tint: string;
+}) {
+  const rows: { label: string; kind: "orders" | "value" | "redeemed" }[] = [
+    { label: "Orders", kind: "orders" },
+    { label: "Order Value", kind: "value" },
+    { label: amountLabel, kind: "redeemed" },
+  ];
+  return (
+    <>
+      {rows.map((r) => (
+        <DataRow
+          key={`p-${r.label}`}
+          label={<>{title} · {r.label} <span className="font-normal opacity-80">{periodLabel}</span></>}
+          cols={cols}
+          block={block}
+          kind={r.kind}
+          compareBlock={compareBlock}
+          tint={tint}
+        />
+      ))}
+      {rows.map((r) => (
+        <DataRow
+          key={`m-${r.label}`}
+          label={<>{title} · {r.label} <span className="font-normal opacity-80">MTD</span></>}
+          cols={cols}
+          block={mtdBlock}
+          kind={r.kind}
+          muted
+          tint={tint}
+        />
+      ))}
+    </>
   );
 }

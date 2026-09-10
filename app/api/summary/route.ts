@@ -89,19 +89,26 @@ export async function GET(req: NextRequest) {
     // so this stays a small read even over a two-month window. ---
     const { data: cbRows } = await sb
       .from("orders")
-      .select("order_date,net_sales,codes:raw->discount_codes")
+      .select("order_date,total_price,total_discounts,codes:raw->discount_codes")
       .eq("channel", "online")
       .gte("order_date", fetchFrom)
       .lte("order_date", to);
-    // One entry per redeeming order: the day, what it sold for (net of
-    // refunds, like every other Value row) and how much cashback it burned.
-    type CbRow = { order_date: string; net_sales: number; codes: { code?: string; amount?: string }[] | null };
+    // One entry per redeeming order: the day, what the order was worth before
+    // any discount (total_price is already net of them, so add them back) and
+    // how much cashback it burned. Pre-discount keeps this comparable with the
+    // branches' invoice_amount; what was actually collected is value - redeemed.
+    type CbRow = {
+      order_date: string;
+      total_price: number;
+      total_discounts: number;
+      codes: { code?: string; amount?: string }[] | null;
+    };
     const cashbackOrders = ((cbRows ?? []) as CbRow[])
       .map((o) => {
         const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
         return {
           day: (o.order_date ?? "").slice(0, 10),
-          value: Number(o.net_sales || 0),
+          value: Number(o.total_price || 0) + Number(o.total_discounts || 0),
           redeemed: hits.reduce((s, d) => s + Number(d.amount || 0), 0),
           hit: hits.length > 0,
         };
@@ -127,7 +134,8 @@ export async function GET(req: NextRequest) {
     }[]).map((r) => ({
       day: (r.issued_day ?? "").slice(0, 10),
       branch: r.branch ?? "",
-      amount: Number(r.discount_amount || 0),
+      value: Number(r.invoice_amount || 0), // what the order itself was worth
+      amount: Number(r.discount_amount || 0), // the 5% it earned
       used: Boolean(r.used),
     }));
 
@@ -186,20 +194,20 @@ export async function GET(req: NextRequest) {
       out[WEBSITE] = { orders: 0, value: 0, redeemed: 0 }; // the site issues none
       let tOrders = 0;
       let tValue = 0;
-      let tUsed = 0;
+      let tCashback = 0;
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
         tOrders += 1;
-        tValue += c.amount;
-        if (c.used) tUsed += 1;
+        tValue += c.value;
+        tCashback += c.amount;
         const col = rawToColumn.get(c.branch);
         if (col && out[col]) {
           out[col].orders += 1;
-          out[col].value += c.amount;
-          if (c.used) out[col].redeemed += 1;
+          out[col].value += c.value;
+          out[col].redeemed += c.amount;
         }
       }
-      out.Total = { orders: tOrders, value: tValue, redeemed: tUsed };
+      out.Total = { orders: tOrders, value: tValue, redeemed: tCashback };
       return out;
     };
 
