@@ -108,6 +108,29 @@ export async function GET(req: NextRequest) {
       })
       .filter((o) => o.hit);
 
+    // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
+    // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
+    // mostly on the website — so this is the other half of the cashback story,
+    // not the same number as the redemption rows above. Missing table (before
+    // migration_v11 is run) degrades to zero rather than failing the page. ---
+    const { data: cbIssuedRows } = await sb
+      .from("cashback_coupons")
+      .select("issued_day,branch,discount_amount,invoice_amount,used")
+      .gte("issued_day", fetchFrom)
+      .lte("issued_day", to);
+    const issued = ((cbIssuedRows ?? []) as {
+      issued_day: string;
+      branch: string | null;
+      discount_amount: number;
+      invoice_amount: number;
+      used: boolean;
+    }[]).map((r) => ({
+      day: (r.issued_day ?? "").slice(0, 10),
+      branch: r.branch ?? "",
+      amount: Number(r.discount_amount || 0),
+      used: Boolean(r.used),
+    }));
+
     // Channels: physical branches (sorted) first, then Website (online).
     const branchLabels = [...new Set(branchRows.map((r) => r.label))].sort((a, b) => a.localeCompare(b));
     const channels = [
@@ -149,6 +172,37 @@ export async function GET(req: NextRequest) {
       return out;
     };
 
+    // Map a raw Odoo branch name to the column it belongs to, learnt from the
+    // sales rows themselves. branchLabel()'s fuzzy tests can't be used here:
+    // cashback runs at 20+ branches and "فرع الاسكندرية" and
+    // "فرع الاسكندرية-سموحة" would both collapse into Semoha.
+    const rawToColumn = new Map(branchRows.map((r) => [r.branch, r.label]));
+
+    // Cashback issued per branch. Columns only exist for branches that also
+    // have sales rows, so Total counts every branch and can exceed their sum.
+    const cashbackIssuedAgg = (pf: string, pt: string) => {
+      const out: Record<string, { orders: number; value: number; redeemed: number }> = {};
+      for (const label of branchLabels) out[label] = { orders: 0, value: 0, redeemed: 0 };
+      out[WEBSITE] = { orders: 0, value: 0, redeemed: 0 }; // the site issues none
+      let tOrders = 0;
+      let tValue = 0;
+      let tUsed = 0;
+      for (const c of issued) {
+        if (c.day < pf || c.day > pt) continue;
+        tOrders += 1;
+        tValue += c.amount;
+        if (c.used) tUsed += 1;
+        const col = rawToColumn.get(c.branch);
+        if (col && out[col]) {
+          out[col].orders += 1;
+          out[col].value += c.amount;
+          if (c.used) out[col].redeemed += 1;
+        }
+      }
+      out.Total = { orders: tOrders, value: tValue, redeemed: tUsed };
+      return out;
+    };
+
     // Cashback-redeeming orders are website-only; branches have no such codes.
     // `value` is what those orders sold for; `redeemed` is the cashback spent.
     const cashbackAgg = (pf: string, pt: string) => {
@@ -173,6 +227,9 @@ export async function GET(req: NextRequest) {
       cashback: cashbackAgg(from, to), // orders using a cashback code, this period
       cashbackMtd: cashbackAgg(monthStart, to),
       cashbackLastMonth: cashbackAgg(lmFrom, lmTo),
+      cashbackIssued: cashbackIssuedAgg(from, to), // coupons earned at branches
+      cashbackIssuedMtd: cashbackIssuedAgg(monthStart, to),
+      cashbackIssuedLastMonth: cashbackIssuedAgg(lmFrom, lmTo),
       meta: {
         from,
         to,

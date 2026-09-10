@@ -105,6 +105,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (ccMode) return;
     try {
       await fetch("/api/sync-odoo?days=3", { headers: { "x-ui-sync": "1" } });
+      // Cashback coupons ride along on the same tick. The window is wider
+      // because `used` flips whenever a coupon is redeemed, long after it was
+      // issued, so already-stored rows have to be re-read.
+      await fetch("/api/sync-cashback?days=45", { headers: { "x-ui-sync": "1" } });
       await reload();
     } catch {
       /* ignore — offline sync is best-effort */

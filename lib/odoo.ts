@@ -24,6 +24,101 @@ export function odooConfig() {
   return { base: base.replace(/\/+$/, ""), key, filter, path, excludeBranches };
 }
 
+/**
+ * The cashback report (ns_loyalty_cashback) lives on the same Odoo server but
+ * behind its own analytics token, so it needs its own key.
+ */
+export function cashbackConfig() {
+  const { base } = odooConfig();
+  const key = process.env.ODOO_CASHBACK_TOKEN;
+  const path = process.env.ODOO_CASHBACK_PATH || "/api/analytics/cashback-report";
+  if (!key) throw new Error("ODOO_CASHBACK_TOKEN is not set in the environment.");
+  return { base, key, path };
+}
+
+/** One coupon from /api/analytics/cashback-report. */
+export interface OdooCashbackCoupon {
+  id: number;
+  date: string; // order confirmation datetime, "YYYY-MM-DD HH:mm:ss"
+  customer_id: number | null;
+  customer_name: string | null;
+  phone: string | null;
+  code: string;
+  salesperson: string | null;
+  branch: string | null;
+  discount_amount: number; // cashback earned (5% of the invoice)
+  invoice_id: number | null;
+  invoice_number: string | null;
+  invoice_amount: number;
+  used: boolean;
+  currency: string | null;
+}
+
+/**
+ * Fetch cashback coupons issued between two dates (paginated).
+ * Dates filter on the order confirmation date, same as the invoices endpoint.
+ */
+export async function fetchCashbackCoupons(
+  dateFrom: string,
+  dateTo: string
+): Promise<OdooCashbackCoupon[]> {
+  const { base, key, path } = cashbackConfig();
+  const all: OdooCashbackCoupon[] = [];
+  let page = 1;
+  const limit = 500; // the endpoint caps at 500
+
+  for (let guard = 0; guard < 1000; guard++) {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "API-Key": key },
+      body: JSON.stringify({ page, limit, date_from: dateFrom, date_to: dateTo }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      throw new Error(`Odoo cashback ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
+    const j = await res.json();
+    // JSON-RPC wrapper, same as the invoices endpoint.
+    const payload = (j.result ?? j) as {
+      status: string;
+      error?: string;
+      data?: OdooCashbackCoupon[];
+      pagination?: { page: number; total_pages: number };
+    };
+    if (payload.status !== "success") throw new Error(payload.error || "Odoo returned an error");
+    all.push(...(payload.data ?? []));
+    const p = payload.pagination;
+    if (!p || page >= p.total_pages) break;
+    page += 1;
+  }
+  return all;
+}
+
+/** Coupon → cashback_coupons row. Drops anything without a code or a date. */
+export function toCashbackRow(c: OdooCashbackCoupon) {
+  const day = (c.date ?? "").slice(0, 10);
+  const code = (c.code ?? "").trim();
+  if (!day || !code) return null;
+  return {
+    id: c.id,
+    // Odoo sends a naive datetime in UTC; make that explicit for timestamptz.
+    issued_at: `${(c.date ?? "").slice(0, 19).replace(" ", "T")}Z`,
+    issued_day: day,
+    branch: c.branch ?? null,
+    code,
+    customer_id: c.customer_id ?? null,
+    customer_name: c.customer_name ?? null,
+    phone: c.phone ?? null,
+    salesperson: c.salesperson ?? null,
+    discount_amount: Number(c.discount_amount || 0),
+    invoice_id: c.invoice_id ?? null,
+    invoice_number: c.invoice_number ?? null,
+    invoice_amount: Number(c.invoice_amount || 0),
+    used: Boolean(c.used),
+    currency: c.currency ?? null,
+  };
+}
+
 export interface OdooInvoiceLine {
   invoice_number: string;
   invoice_date: string;
