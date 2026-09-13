@@ -199,6 +199,7 @@ export default function SummaryPage() {
                 render={(c) => (c === "Total" ? "All" : c)}
                 strong
               />
+              {/* Selected day or range: orders, value, and the average. */}
               <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" tint={TINT.date} />
               <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" tint={TINT.date} />
               <DataRow
@@ -210,17 +211,10 @@ export default function SummaryPage() {
                 accent
                 tint={TINT.aovDay}
               />
-              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.orders} />
-              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.value} />
-              <DataRow
-                label={<>Avg Order Value <span className="font-normal opacity-80">per month · MTD</span></>}
-                cols={cols}
-                block={aovMonth}
-                kind="value"
-                compareBlock={aovLastMonthMtd}
-                accent
-                tint={TINT.aovMonth}
-              />
+
+              <GroupGap cols={cols} />
+
+              {/* The same window one month back, then the month-to-date average. */}
               <DataRow
                 label={<>Orders Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
                 cols={cols}
@@ -253,6 +247,24 @@ export default function SummaryPage() {
                 accent
                 tint={TINT.aovMonth}
               />
+
+              <GroupGap cols={cols} />
+
+              {/* Month to date. */}
+              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.orders} />
+              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.value} />
+              <DataRow
+                label={<>Avg Order Value <span className="font-normal opacity-80">per month · MTD</span></>}
+                cols={cols}
+                block={aovMonth}
+                kind="value"
+                compareBlock={aovLastMonthMtd}
+                accent
+                tint={TINT.aovMonth}
+              />
+
+              <GroupGap cols={cols} />
+
               {/* Orders that paid with cashback, on the day of purchase. */}
               <DataRow
                 label={<>Orders Using Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
@@ -402,6 +414,19 @@ function DataRow({
           </td>
         );
       })}
+    </tr>
+  );
+}
+
+/**
+ * A hairline gap between groups of rows. Thin enough not to read as a row of
+ * its own, but enough to stop "Avg Order Value" in one block running into the
+ * next block's orders.
+ */
+function GroupGap({ cols }: { cols: string[] }) {
+  return (
+    <tr aria-hidden="true">
+      <td colSpan={cols.length + 1} className="h-1.5 bg-[#5c3a1e] p-0" />
     </tr>
   );
 }
