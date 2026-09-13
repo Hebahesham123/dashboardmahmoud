@@ -42,17 +42,18 @@ const money = (n: number) => fmtNum(Math.round(n));
 const BORDER = "border border-[#8a5730]";
 
 /**
- * Row-label colours. A metric and the last-month row it is measured against
- * share one tint, so it is obvious at a glance which rows form a pair. The
- * selected-date rows keep the base brown — nothing is compared against them.
+ * One colour per block of rows. Every row in a block shares its label colour,
+ * so the block is obvious at a glance and the white gaps between blocks do the
+ * separating. (This replaced a per-metric scheme that tinted each metric and
+ * its comparison row alike — with the table grouped by period, colouring by
+ * metric cut across the grouping instead of reinforcing it.)
  */
 const TINT = {
-  date: "bg-[#6f4423]", // Orders / Value for the picked day or range
-  orders: "bg-[#2f5d5b]", // MTD Orders  ↔  Orders Last Month
-  value: "bg-[#7a3f5d]", // MTD Value   ↔  Amount Last Month
-  aovDay: "bg-[#4a5588]", // Avg Order Value / day  ↔  its last-month row
-  aovMonth: "bg-[#3c6f8c]", // Avg Order Value / month (MTD) ↔ last month MTD
-  cashback: "bg-[#4d6b2f]", // Cashback purchases / earned / spent
+  header: "bg-[#332a24]", // Channel / Location — the table's own headings
+  period: "bg-[#6f4423]", // the picked day or range
+  lastMonth: "bg-[#7a3f5d]", // the same window one month back
+  mtd: "bg-[#2f5d5b]", // month to date
+  cashback: "bg-[#4d6b2f]", // orders that paid with a voucher
 } as const;
 
 export default function SummaryPage() {
@@ -199,9 +200,12 @@ export default function SummaryPage() {
                 render={(c) => (c === "Total" ? "All" : c)}
                 strong
               />
+
+              <GroupGap cols={cols} />
+
               {/* Selected day or range: orders, value, and the average. */}
-              <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" tint={TINT.date} />
-              <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" tint={TINT.date} />
+              <DataRow label={<>Orders <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="orders" tint={TINT.period} />
+              <DataRow label={<>Value <span className="font-normal opacity-80">{periodLabel}</span></>} cols={cols} block={data.period} kind="value" tint={TINT.period} />
               <DataRow
                 label={<>Avg Order Value <span className="font-normal opacity-80">per {data.meta.single ? "day" : "range"} · {periodLabel}</span></>}
                 cols={cols}
@@ -209,7 +213,7 @@ export default function SummaryPage() {
                 kind="value"
                 compareBlock={aovLastMonth}
                 accent
-                tint={TINT.aovDay}
+                tint={TINT.period}
               />
 
               <GroupGap cols={cols} />
@@ -221,7 +225,7 @@ export default function SummaryPage() {
                 block={data.lastMonth}
                 kind="orders"
                 muted
-                tint={TINT.orders}
+                tint={TINT.lastMonth}
               />
               <DataRow
                 label={<>Amount Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
@@ -229,7 +233,7 @@ export default function SummaryPage() {
                 block={data.lastMonth}
                 kind="value"
                 muted
-                tint={TINT.value}
+                tint={TINT.lastMonth}
               />
               <DataRow
                 label={<>Avg Order Value per {data.meta.single ? "day" : "range"} Last Month <span className="font-normal opacity-80">{lastMonthLabel}</span></>}
@@ -237,7 +241,7 @@ export default function SummaryPage() {
                 block={aovLastMonth}
                 kind="value"
                 accent
-                tint={TINT.aovDay}
+                tint={TINT.lastMonth}
               />
               <DataRow
                 label={<>Avg Order Value per month Last Month <span className="font-normal opacity-80">{lastMonthMtdLabel}</span></>}
@@ -245,14 +249,14 @@ export default function SummaryPage() {
                 block={aovLastMonthMtd}
                 kind="value"
                 accent
-                tint={TINT.aovMonth}
+                tint={TINT.lastMonth}
               />
 
               <GroupGap cols={cols} />
 
               {/* Month to date. */}
-              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.orders} />
-              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.value} />
+              <DataRow label="MTD Orders" cols={cols} block={data.mtd} kind="orders" compareBlock={data.lastMonthMtd} tint={TINT.mtd} />
+              <DataRow label="MTD Value" cols={cols} block={data.mtd} kind="value" compareBlock={data.lastMonthMtd} tint={TINT.mtd} />
               <DataRow
                 label={<>Avg Order Value <span className="font-normal opacity-80">per month · MTD</span></>}
                 cols={cols}
@@ -260,7 +264,7 @@ export default function SummaryPage() {
                 kind="value"
                 compareBlock={aovLastMonthMtd}
                 accent
-                tint={TINT.aovMonth}
+                tint={TINT.mtd}
               />
 
               <GroupGap cols={cols} />
@@ -314,11 +318,10 @@ export default function SummaryPage() {
             beside it.
           </span>
           <span className="inline-flex items-center gap-1">
-            · Row-label colour pairs a metric with the row it is compared against:
-            <span className={`ml-0.5 inline-block h-2.5 w-2.5 rounded-sm ${TINT.orders}`} /> orders
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovDay}`} /> avg order value / {data.meta.single ? "day" : "range"}
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovMonth}`} /> avg order value / month
+            · One colour per block:
+            <span className={`ml-0.5 inline-block h-2.5 w-2.5 rounded-sm ${TINT.period}`} /> {periodLabel}
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.lastMonth}`} /> last month
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.mtd}`} /> month to date
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
@@ -341,7 +344,7 @@ function HeaderRow({
 }) {
   return (
     <tr>
-      <th className={`${BORDER} bg-[#6f4423] px-2 py-2.5 text-left font-bold text-white sm:px-4`}>{label}</th>
+      <th className={`${BORDER} ${TINT.header} px-2 py-2.5 text-left font-bold text-white sm:px-4`}>{label}</th>
       {cols.map((c) => (
         <th
           key={c}
@@ -419,14 +422,14 @@ function DataRow({
 }
 
 /**
- * A hairline gap between groups of rows. Thin enough not to read as a row of
- * its own, but enough to stop "Avg Order Value" in one block running into the
- * next block's orders.
+ * A clean white band between blocks of rows. It carries no gridline of its own
+ * — a bordered cell here would read as an empty row — so the blocks above and
+ * below simply stop, and the white does the separating.
  */
 function GroupGap({ cols }: { cols: string[] }) {
   return (
     <tr aria-hidden="true">
-      <td colSpan={cols.length + 1} className="h-1.5 bg-[#5c3a1e] p-0" />
+      <td colSpan={cols.length + 1} className="h-2.5 border-0 bg-white p-0" />
     </tr>
   );
 }
