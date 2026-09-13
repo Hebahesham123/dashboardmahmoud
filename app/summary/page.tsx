@@ -262,7 +262,7 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Cashback Used <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Cashback Used <span className="font-normal opacity-80">of that earned</span></>}
                 cols={cols}
                 block={data.cashback.spent}
                 kind="value"
@@ -270,7 +270,7 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Total Purchases from Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Total Purchases from Cashback Orders <span className="font-normal opacity-80">using that cashback</span></>}
                 cols={cols}
                 block={data.cashback.purchases}
                 kind="value"
@@ -288,15 +288,16 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback rows belong to the shop that issued the voucher: what it gave out, how much of it customers spent
+            · Cashback rows belong to the shop that issued the voucher: what it gave out, how much of that has come back
             (the amount actually applied — handed 5,000, spends 4,000, counts as 4,000), and what those orders were
-            worth. Redemption happens on the website, but it is credited back to the issuing shop so a column reads
+            worth. Vouchers are spent on the website, but it is credited back to the issuing shop so a column reads
             straight down; the website issues no cashback, so it shows “—”.
           </span>
           <span>
-            · Earned counts vouchers issued in the period; Used and Purchases count orders placed in it, which will
-            usually be spending older vouchers. Cashback runs at 20+ branches but only branches with sales rows get a
-            column, so Total covers them all and can exceed the columns beside it.
+            · All three rows follow the same vouchers — the ones issued in the period — so Used can never exceed Earned.
+            Used counts a voucher whenever it was spent, including after the period, so recent days start near zero and
+            fill in. Cashback runs at 20+ branches but only branches with sales rows get a column, so Total covers them
+            all and can exceed the columns beside it.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">

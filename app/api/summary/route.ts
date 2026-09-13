@@ -114,39 +114,30 @@ export async function GET(req: NextRequest) {
       total_discounts: number;
       codes: { code?: string; amount?: string }[] | null;
     };
+    // Read to today, not to `to`: a voucher issued inside the window is often
+    // spent after it, and "how much of what we gave has come back" has to count
+    // that. `spent` is what Shopify actually applied, which can be under the
+    // voucher's face value (915.81 applied as 899) but never over it.
     const redeemRows = await pageAll<CbRow>(() =>
       sb
         .from("orders")
         .select("order_date,total_price,total_discounts,codes:raw->discount_codes")
         .eq("channel", "online")
         .gte("order_date", fetchFrom)
-        .lte("order_date", to)
     );
     const cashbackOrders = redeemRows
-      .map((o) => {
-        const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
-        return {
-          day: (o.order_date ?? "").slice(0, 10),
-          purchase: Number(o.total_price || 0) + Number(o.total_discounts || 0),
-          spent: hits.reduce((sum, d) => sum + Number(d.amount || 0), 0),
-          codes: hits.map((d) => (d.code ?? "").trim().toLowerCase()),
-        };
-      })
-      .filter((o) => o.codes.length > 0);
+      .map((o) => ({
+        purchase: Number(o.total_price || 0) + Number(o.total_discounts || 0),
+        hits: (o.codes ?? [])
+          .filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()))
+          .map((d) => ({ code: (d.code ?? "").trim().toLowerCase(), amount: Number(d.amount || 0) })),
+      }))
+      .filter((o) => o.hits.length > 0);
 
-    // Which shop issued each redeemed voucher. Looked up by the codes actually
-    // seen, so it stays a handful of rows however big the coupon table gets —
-    // and a voucher redeemed long after it was issued is still resolved.
-    // Orders that spend several vouchers have never mixed branches, so one
-    // order maps to exactly one shop.
-    const redeemedCodes = [...new Set(cashbackOrders.flatMap((o) => o.codes))];
-    const codeBranch = new Map<string, string>();
-    for (let i = 0; i < redeemedCodes.length; i += 200) {
-      const chunk = redeemedCodes.slice(i, i + 200);
-      const { data } = await sb.from("cashback_coupons").select("code,branch").in("code", chunk);
-      for (const r of (data ?? []) as { code: string; branch: string | null }[]) {
-        codeBranch.set((r.code ?? "").trim().toLowerCase(), r.branch ?? "");
-      }
+    // How much has come back on each individual voucher.
+    const spentByCode = new Map<string, number>();
+    for (const o of cashbackOrders) {
+      for (const h of o.hits) spentByCode.set(h.code, (spentByCode.get(h.code) ?? 0) + h.amount);
     }
 
     // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
@@ -157,11 +148,12 @@ export async function GET(req: NextRequest) {
     const cbIssuedRows = await pageAll<{
       issued_day: string;
       branch: string | null;
+      code: string;
       discount_amount: number;
     }>(() =>
       sb
         .from("cashback_coupons")
-        .select("issued_day,branch,discount_amount")
+        .select("issued_day,branch,code,discount_amount")
         .gte("issued_day", fetchFrom)
         .lte("issued_day", to)
     );
@@ -169,6 +161,10 @@ export async function GET(req: NextRequest) {
       day: (r.issued_day ?? "").slice(0, 10),
       branch: r.branch ?? "",
       earned: Number(r.discount_amount || 0), // the 5% put on the voucher
+      code: (r.code ?? "").trim().toLowerCase(),
+      // What has come back on this very voucher — so used can never outrun
+      // earned, however long after the window it was spent.
+      spent: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0,
     }));
 
     // Channels: physical branches (sorted) first, then Website (online).
@@ -223,17 +219,20 @@ export async function GET(req: NextRequest) {
      * actually happens, which is why a row is filled on one side and blank on
      * the other — cashback is earned in the shops and spent on the website.
      *
-     *  earned    — the 5% put onto vouchers the shop issued in the window
-     *  spent     — what the shop's vouchers covered on orders in the window,
+     * All three follow ONE set of vouchers: the ones the shop issued inside the
+     * window. Measuring Used against whatever was spent in the window instead
+     * let a shop that gave 1,000 show 2,000 used, because the extra came from
+     * older vouchers. Tying them together makes Used ≤ Earned by construction.
+     *
+     *  earned    — the 5% put onto those vouchers
+     *  spent     — how much of them has come back, whenever it was spent, and
      *              the amount actually applied: handed 5,000, spends 4,000,
      *              counts as 4,000
-     *  purchases — what those orders were worth, before any discount
+     *  purchases — what the orders those vouchers paid for were worth
      *
-     * Redemption happens on the website, but crediting it to the website would
-     * leave a column claiming cashback was spent where none was ever earned.
-     * Everything is credited to the issuing shop instead, so a column reads
-     * straight down, and the website — which issues nothing and keeps nothing —
-     * shows a dash throughout.
+     * Redemption happens on the website, but crediting it there would leave a
+     * column claiming cashback was spent where none was ever earned, so it is
+     * credited to the issuing shop and the website shows a dash throughout.
      *
      * Branch columns exist only for branches that also have sales rows, so
      * Total covers all 20-odd and can exceed the columns beside it.
@@ -244,28 +243,33 @@ export async function GET(req: NextRequest) {
       for (const label of branchLabels) out[label] = blank();
       const total = blank();
 
-      // Earned — branch side.
+      // One pass over the vouchers issued in the window: what they were worth,
+      // what has come back on them, and what they bought. All three follow the
+      // same vouchers, so Used can never exceed Earned.
+      const cohort = new Map<string, string>(); // voucher code -> issuing shop
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
+        cohort.set(c.code, c.branch);
         total.earned += c.earned;
+        total.spent += c.spent;
         const col = rawToColumn.get(c.branch);
-        if (col && out[col]) out[col].earned += c.earned;
-      }
-
-      // Purchased and spent — credited to the shop that issued the voucher, so
-      // a branch column reads straight down: what it gave, what came back, and
-      // what those orders were worth.
-      for (const o of cashbackOrders) {
-        if (o.day < pf || o.day > pt) continue;
-        total.purchases += o.purchase;
-        total.spent += o.spent;
-        const raw = codeBranch.get(o.codes[0]);
-        const col = raw ? rawToColumn.get(raw) : undefined;
         if (col && out[col]) {
-          out[col].purchases += o.purchase;
-          out[col].spent += o.spent;
+          out[col].earned += c.earned;
+          out[col].spent += c.spent;
         }
       }
+
+      // An order counts once, against the shop behind whichever of its
+      // vouchers belongs to this cohort — an order paying with several
+      // vouchers has never mixed shops, so there is nothing to apportion.
+      for (const o of cashbackOrders) {
+        const hit = o.hits.find((h) => cohort.has(h.code));
+        if (!hit) continue;
+        total.purchases += o.purchase;
+        const col = rawToColumn.get(cohort.get(hit.code)!);
+        if (col && out[col]) out[col].purchases += o.purchase;
+      }
+
       out[WEBSITE] = blank(); // cashback is a shop programme end to end
       out.Total = total;
 
