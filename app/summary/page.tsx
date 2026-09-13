@@ -16,7 +16,7 @@ interface SummaryResp {
   lastMonthMtd: Block; // last month measured to the same day of the month
   // Orders that paid with a voucher, on the day they were placed: how many,
   // how much cashback they spent, and what they came to.
-  cashback: { orders: Block; spent: Block; purchases: Block };
+  cashback: { orders: Block; spent: Block; net: Block; purchases: Block };
   meta: {
     from: string;
     to: string;
@@ -270,6 +270,13 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
+                label={<>Paid After Cashback <span className="font-normal opacity-80">purchases − cashback used</span></>}
+                cols={cols}
+                block={data.cashback.net}
+                kind="value"
+                tint={TINT.cashback}
+              />
+              <DataRow
                 label={<>Total Purchases from Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
                 block={data.cashback.purchases}
@@ -289,7 +296,7 @@ export default function SummaryPage() {
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how
-            much cashback they spent, and what they came to before any discount. Branch columns are shop redemptions,
+            much cashback they spent, what was left to pay, and what they came to before any discount. Branch columns are shop redemptions,
             read off the redeeming invoice; Website is online ones, read off the Shopify order. Cashback runs at 20+
             branches but only branches with sales rows get a column, so Total covers them all and can exceed the columns
             beside it.

@@ -247,14 +247,22 @@ export async function GET(req: NextRequest) {
       out.Total = total;
 
       // One block per row the table draws, so the client stays a dumb printer.
-      const pick = (k: "orders" | "spent" | "purchases") => {
+      // `net` is what the customer actually paid once the voucher came off.
+      const pick = (k: "orders" | "spent" | "purchases" | "net") => {
         const b: Record<string, { orders: number; value: number }> = {};
         for (const [col, v] of Object.entries(out)) {
-          b[col] = { orders: k === "orders" ? v.orders : 0, value: k === "orders" ? 0 : v[k] };
+          const value =
+            k === "orders" ? 0 : k === "net" ? v.purchases - v.spent : v[k];
+          b[col] = { orders: k === "orders" ? v.orders : 0, value };
         }
         return b;
       };
-      return { orders: pick("orders"), spent: pick("spent"), purchases: pick("purchases") };
+      return {
+        orders: pick("orders"),
+        spent: pick("spent"),
+        net: pick("net"),
+        purchases: pick("purchases"),
+      };
     };
 
     return NextResponse.json({
