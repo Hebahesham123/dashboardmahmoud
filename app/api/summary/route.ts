@@ -150,10 +150,11 @@ export async function GET(req: NextRequest) {
       branch: string | null;
       code: string;
       discount_amount: number;
+      used: boolean;
     }>(() =>
       sb
         .from("cashback_coupons")
-        .select("issued_day,branch,code,discount_amount")
+        .select("issued_day,branch,code,discount_amount,used")
         .gte("issued_day", fetchFrom)
         .lte("issued_day", to)
     );
@@ -164,7 +165,15 @@ export async function GET(req: NextRequest) {
       code: (r.code ?? "").trim().toLowerCase(),
       // What has come back on this very voucher — so used can never outrun
       // earned, however long after the window it was spent.
-      spent: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0,
+      spentOnline: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0,
+      // Odoo flags a voucher used without saying where. If it was used and it
+      // never turns up in a Shopify order, it was spent in a shop. There is no
+      // redeeming invoice to read an applied amount from, so the face value is
+      // the best available figure — offline redemption takes the whole voucher.
+      spentOffline:
+        Boolean(r.used) && !spentByCode.has((r.code ?? "").trim().toLowerCase())
+          ? Number(r.discount_amount || 0)
+          : 0,
     }));
 
     // Channels: physical branches (sorted) first, then Website (online).
@@ -230,10 +239,18 @@ export async function GET(req: NextRequest) {
      *              counts as 4,000
      *  purchases — what the orders those vouchers paid for were worth
      *
-     * Earned shows under the shops that gave the vouchers out; Used and
-     * Purchases show under Website, where they are spent. Each row therefore
-     * has a side it cannot speak for, which prints as a dash. Total is the
-     * honest line to read across: given X, Y of it came back, on orders worth Z.
+     * Earned shows under the shops that gave the vouchers out, and again under
+     * Website for the vouchers that were then spent online — the same cashback
+     * counted twice across the row, because otherwise the Website column shows
+     * spending with nothing behind it. Total counts it once. Used shows on both
+     * sides and does partition: the Website figure is what Shopify applied, the
+     * branch figures are vouchers Odoo flagged used that never appear in an
+     * online order — roughly a quarter of redemptions, and invisible while Used
+     * was website-only.
+     *
+     * Purchases stays website-only: for an online redemption we have the order
+     * it paid for, but Odoo gives no redeeming invoice for a shop one, so the
+     * basket behind an offline redemption is unknown rather than zero.
      *
      * Branch columns exist only for branches that also have sales rows, so
      * Total covers all 20-odd and can exceed the columns beside it.
@@ -247,27 +264,39 @@ export async function GET(req: NextRequest) {
       // One pass over the vouchers issued in the window: what they were worth,
       // what has come back on them, and what they bought. All three follow the
       // same vouchers, so Used can never exceed Earned.
-      // Earned sits under the shop that handed the voucher out.
+      // Earned sits under the shop that handed the voucher out. So does the
+      // part of Used that was spent in a shop.
       const cohort = new Set<string>();
+      let spentOnline = 0;
+      let earnedSpentOnline = 0; // face value of the vouchers spent online
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
         cohort.add(c.code);
+        spentOnline += c.spentOnline;
+        if (c.spentOnline > 0) earnedSpentOnline += c.earned;
         total.earned += c.earned;
-        total.spent += c.spent;
+        total.spent += c.spentOnline + c.spentOffline;
         const col = rawToColumn.get(c.branch);
-        if (col && out[col]) out[col].earned += c.earned;
+        if (col && out[col]) {
+          out[col].earned += c.earned;
+          out[col].spent += c.spentOffline;
+        }
       }
 
-      // Used and Purchases sit under Website, because that is where a voucher
-      // is spent — every redemption we can see is an online order. An order
-      // counts once however many of its vouchers belong to this cohort.
+      // The online half of Used, and the orders behind it, sit under Website.
+      // An order counts once however many of its vouchers are in this cohort.
       const web = blank();
+      web.spent = spentOnline;
+      // The cashback behind the online spending. It was still handed out in a
+      // shop, so it is also counted in that shop's Earned — this is a slice of
+      // the branch columns shown again, not an addition to them. Without it the
+      // Website column claimed spending with no cashback behind it.
+      web.earned = earnedSpentOnline;
       for (const o of cashbackOrders) {
         if (!o.hits.some((h) => cohort.has(h.code))) continue;
         total.purchases += o.purchase;
         web.purchases += o.purchase;
       }
-      web.spent = total.spent;
       out[WEBSITE] = web;
       out.Total = total;
 
@@ -280,8 +309,7 @@ export async function GET(req: NextRequest) {
         for (const [col, v] of Object.entries(out)) {
           // Earned is a shop fact, Used and Purchases are website facts; the
           // other side of each gets a dash rather than a misleading zero.
-          const na =
-            col !== "Total" && (k === "earned" ? col === WEBSITE : col !== WEBSITE);
+          const na = col !== "Total" && k === "purchases" && col !== WEBSITE;
           b[col] = { orders: 0, value: v[k], na };
         }
         return b;

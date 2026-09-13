@@ -288,16 +288,17 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback is given out in the shops and spent on the website, so Earned shows under the branches and Used
-            and Purchases show under Website. Each row has a side it cannot speak for, which prints “—” rather than a
-            zero. Read Total across: given X, Y of it came back, on orders worth Z. Used is the amount actually applied
-            — handed 5,000, spends 4,000, counts as 4,000.
+            · Cashback is given out in the shops, so Earned sits under the branches — and again under Website for the
+            vouchers later spent online, so that column has the cashback behind its own spending. That slice is the same
+            money shown twice across the row; Total counts it once. Used does split cleanly: Website is what Shopify
+            applied, the branch figures are vouchers Odoo flagged used that never reached an online order.
           </span>
           <span>
             · All three rows follow the same vouchers — the ones issued in the period — so Used can never exceed Earned.
             Used counts a voucher whenever it was spent, including after the period, so recent days start near zero and
-            fill in. Cashback runs at 20+ branches but only branches with sales rows get a column, so Total covers them
-            all and can exceed the columns beside it.
+            fill in. Purchases is website-only: Odoo names no redeeming invoice for a shop redemption, so the basket
+            behind one is unknown, and a shop redemption counts at the voucher&apos;s full face value. Cashback runs at
+            20+ branches but only branches with sales rows get a column, so Total covers them all.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
