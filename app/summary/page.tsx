@@ -14,8 +14,8 @@ interface SummaryResp {
   mtd: Block;
   lastMonth: Block; // same day / same range, one month back
   lastMonthMtd: Block; // last month measured to the same day of the month
-  // Cashback, per issuing branch: what the earning orders were worth, the
-  // cashback put on the vouchers, and how much of it has been spent since.
+  // Cashback: orders that paid with a voucher (website), the cashback issued
+  // (branches), and how much of it those orders actually consumed.
   cashback: { purchases: Block; earned: Block; spent: Block };
   meta: {
     from: string;
@@ -269,7 +269,7 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Cashback Used <span className="font-normal opacity-80">of that earned</span></>}
+                label={<>Cashback Used <span className="font-normal opacity-80">on those orders</span></>}
                 cols={cols}
                 block={data.cashback.spent}
                 kind="value"
@@ -288,14 +288,14 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback rows follow the branch that issued the voucher: what the earning orders were worth, the 5% put on
-            the vouchers, and how much of that has been spent since — the actual amount applied, so a customer given
-            5,000 who spends 4,000 counts as 4,000. Used is not capped to the window: a voucher issued today and spent
-            next month still lands on today.
+            · Cashback is earned in the shops and spent on the website, so each row shows numbers on the side where it
+            happens. Purchases and Used sit under Website — orders that paid with a voucher, and what the voucher
+            covered (a customer handed 5,000 who spends 4,000 counts as 4,000). Earned sits under the branches.
           </span>
           <span>
-            · The website issues no cashback, so its column is blank on these rows. Cashback runs at 20+ branches but
-            only branches with sales rows get a column, so Total covers them all and can exceed the columns beside it.
+            · Branch cashback redemptions are not in these rows: Odoo reports a coupon as used without saying on which
+            order, day or branch. Cashback runs at 20+ branches but only branches with sales rows get a column, so
+            Earned Total covers them all and can exceed the columns beside it.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">

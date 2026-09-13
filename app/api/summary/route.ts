@@ -104,31 +104,35 @@ export async function GET(req: NextRequest) {
       .lte("day", to);
     const online = (dmRows ?? []) as { day: string; total_sales: number; orders_count: number }[];
 
-    // --- Cashback: website orders redeeming an auto-issued cashback voucher.
-    // Only the discount_codes slice of the raw Shopify payload is projected,
-    // so this stays a small read even over a two-month window. ---
-    // How much of each voucher was actually spent, keyed by code. A coupon is
-    // often redeemed weeks after it was issued, so this reads to today rather
-    // than to `to` — otherwise a past window would look unspent. The amount is
-    // what Shopify actually applied, which can be less than the voucher's face
-    // value (a 915.81 voucher applied as 899).
-    type CbRow = { order_date: string; codes: { code?: string; amount?: string }[] | null };
+    // --- Orders that PAID with a cashback voucher. These are website orders:
+    // the coupon code lands in the Shopify order's discount_codes. `purchase`
+    // is the order before any discount; `spent` is what the voucher actually
+    // covered, which can be under its face value (915.81 applied as 899). ---
+    type CbRow = {
+      order_date: string;
+      total_price: number;
+      total_discounts: number;
+      codes: { code?: string; amount?: string }[] | null;
+    };
     const redeemRows = await pageAll<CbRow>(() =>
       sb
         .from("orders")
-        .select("order_date,codes:raw->discount_codes")
+        .select("order_date,total_price,total_discounts,codes:raw->discount_codes")
         .eq("channel", "online")
         .gte("order_date", fetchFrom)
+        .lte("order_date", to)
     );
-    const spentByCode = new Map<string, number>();
-    for (const o of redeemRows) {
-      for (const d of o.codes ?? []) {
-        const code = (d?.code ?? "").trim();
-        if (!CASHBACK_RE.test(code)) continue;
-        const k = code.toLowerCase();
-        spentByCode.set(k, (spentByCode.get(k) ?? 0) + Number(d.amount || 0));
-      }
-    }
+    const cashbackOrders = redeemRows
+      .map((o) => {
+        const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
+        return {
+          day: (o.order_date ?? "").slice(0, 10),
+          purchase: Number(o.total_price || 0) + Number(o.total_discounts || 0),
+          spent: hits.reduce((sum, d) => sum + Number(d.amount || 0), 0),
+          hit: hits.length > 0,
+        };
+      })
+      .filter((o) => o.hit);
 
     // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
     // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
@@ -138,22 +142,18 @@ export async function GET(req: NextRequest) {
     const cbIssuedRows = await pageAll<{
       issued_day: string;
       branch: string | null;
-      code: string;
       discount_amount: number;
-      invoice_amount: number;
     }>(() =>
       sb
         .from("cashback_coupons")
-        .select("issued_day,branch,code,discount_amount,invoice_amount")
+        .select("issued_day,branch,discount_amount")
         .gte("issued_day", fetchFrom)
         .lte("issued_day", to)
     );
     const issued = cbIssuedRows.map((r) => ({
       day: (r.issued_day ?? "").slice(0, 10),
       branch: r.branch ?? "",
-      purchase: Number(r.invoice_amount || 0), // the order that earned the cashback
       earned: Number(r.discount_amount || 0), // the 5% put on the voucher
-      spent: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0, // how much of it has gone
     }));
 
     // Channels: physical branches (sorted) first, then Website (online).
@@ -204,38 +204,44 @@ export async function GET(req: NextRequest) {
     const rawToColumn = new Map(branchRows.map((r) => [r.branch, r.label]));
 
     /**
-     * Cashback for one window, per issuing branch. Every figure hangs off the
-     * branch order that earned the voucher, which is why these are branch-side
-     * rows: cashback is issued in the shops, never on the website.
+     * Cashback for one window. Each row sits where the thing it measures
+     * actually happens, which is why a row is filled on one side and blank on
+     * the other — cashback is earned in the shops and spent on the website.
      *
-     *  purchases — what those orders were worth
-     *  earned    — the 5% put onto the vouchers
-     *  spent     — how much of that has actually been used since
+     *  purchases — orders that PAID with a voucher, before any discount
+     *              (website: the code is in the Shopify order)
+     *  earned    — the 5% put onto vouchers issued that day
+     *              (branches: the shops issue them, the website never does)
+     *  spent     — what those vouchers actually covered on the paying orders,
+     *              so a customer handed 5,000 who spends 4,000 counts as 4,000
      *
-     * spent comes from the Shopify orders the codes turn up in, so it is the
-     * amount really applied, not the face value: a customer given 5,000 who
-     * spends 4,000 counts as 4,000 here. Total covers every branch, including
-     * the 20-odd with no sales rows and so no column of their own.
+     * Branch columns exist only for branches that also have sales rows, so the
+     * earned Total covers all 20-odd and can exceed the columns beside it.
      */
     const cashbackAgg = (pf: string, pt: string) => {
       const blank = () => ({ purchases: 0, earned: 0, spent: 0 });
       const out: Record<string, ReturnType<typeof blank>> = {};
       for (const label of branchLabels) out[label] = blank();
-      out[WEBSITE] = blank(); // the website issues no cashback
       const total = blank();
 
+      // Earned — branch side.
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
-        total.purchases += c.purchase;
         total.earned += c.earned;
-        total.spent += c.spent;
         const col = rawToColumn.get(c.branch);
-        if (col && out[col]) {
-          out[col].purchases += c.purchase;
-          out[col].earned += c.earned;
-          out[col].spent += c.spent;
-        }
+        if (col && out[col]) out[col].earned += c.earned;
       }
+
+      // Purchased and spent — website side.
+      const web = blank();
+      for (const o of cashbackOrders) {
+        if (o.day < pf || o.day > pt) continue;
+        web.purchases += o.purchase;
+        web.spent += o.spent;
+      }
+      out[WEBSITE] = web;
+      total.purchases += web.purchases;
+      total.spent += web.spent;
       out.Total = total;
 
       // One block per row the table draws, so the client stays a dumb printer.
