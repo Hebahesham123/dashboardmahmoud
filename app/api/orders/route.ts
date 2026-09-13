@@ -44,18 +44,27 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(Number(sp.get("limit")) || 500, 5000);
 
     const sb = createServiceClient();
-    const { data, error } = await sb
-      .from("orders")
-      .select(
-        "id,order_number,order_date,created_at,customer_name,customer_email,financial_status,fulfillment_status,total_items,total_price,total_discounts,net_sales,currency,cancelled_at,codes:raw->discount_codes"
-      )
-      .gte("order_date", from)
-      .lte("order_date", to)
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (error) throw new Error(error.message);
+    // PostgREST hands back at most 1000 rows however big `limit` is, so a wide
+    // range has to be walked a page at a time or it silently comes back short.
+    const PAGE = 1000;
+    const data: Record<string, unknown>[] = [];
+    for (let offset = 0; offset < limit; offset += PAGE) {
+      const { data: page, error } = await sb
+        .from("orders")
+        .select(
+          "id,order_number,order_date,created_at,customer_name,customer_email,financial_status,fulfillment_status,total_items,total_price,total_discounts,net_sales,currency,cancelled_at,codes:raw->discount_codes"
+        )
+        .gte("order_date", from)
+        .lte("order_date", to)
+        .order("created_at", { ascending: false })
+        .range(offset, Math.min(offset + PAGE, limit) - 1);
+      if (error) throw new Error(error.message);
+      const rows = (page ?? []) as Record<string, unknown>[];
+      data.push(...rows);
+      if (rows.length < PAGE) break;
+    }
 
-    const rows: OrderRow[] = ((data ?? []) as Record<string, unknown>[]).map((o) => {
+    const rows: OrderRow[] = data.map((o) => {
       const codes = ((o.codes as { code?: string }[] | null) ?? [])
         .map((d) => (d?.code ?? "").trim())
         .filter(Boolean);

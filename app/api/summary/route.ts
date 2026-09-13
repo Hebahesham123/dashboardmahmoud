@@ -39,6 +39,26 @@ const CASHBACK_RE = new RegExp(
 );
 
 
+/**
+ * PostgREST caps a response at 1000 rows whatever `limit` says, so anything
+ * that can exceed that has to be walked a page at a time. cashback_coupons
+ * passed 1000 within a fortnight of the module going live.
+ */
+async function pageAll<T>(
+  build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }> }
+): Promise<T[]> {
+  const size = 1000;
+  const all: T[] = [];
+  for (let page = 0; page < 100; page++) {
+    const { data, error } = await build().range(page * size, page * size + size - 1);
+    if (error) return all; // missing table / permission — degrade to what we have
+    const rows = (data ?? []) as T[];
+    all.push(...rows);
+    if (rows.length < size) break;
+  }
+  return all;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
@@ -87,51 +107,53 @@ export async function GET(req: NextRequest) {
     // --- Cashback: website orders redeeming an auto-issued cashback voucher.
     // Only the discount_codes slice of the raw Shopify payload is projected,
     // so this stays a small read even over a two-month window. ---
-    const { data: cbRows } = await sb
-      .from("orders")
-      .select("order_date,total_price,total_discounts,codes:raw->discount_codes")
-      .eq("channel", "online")
-      .gte("order_date", fetchFrom)
-      .lte("order_date", to);
-    // One entry per redeeming order: the day and what the order was worth
-    // before any discount (total_price is already net of them, so add them
-    // back). Pre-discount keeps this comparable with the branches'
-    // invoice_amount, which is likewise the invoice the 5% was taken from.
-    type CbRow = {
-      order_date: string;
-      total_price: number;
-      total_discounts: number;
-      codes: { code?: string }[] | null;
-    };
-    const cashbackOrders = ((cbRows ?? []) as CbRow[])
-      .filter((o) => (o.codes ?? []).some((d) => CASHBACK_RE.test((d?.code ?? "").trim())))
-      .map((o) => ({
-        day: (o.order_date ?? "").slice(0, 10),
-        value: Number(o.total_price || 0) + Number(o.total_discounts || 0),
-      }));
+    // How much of each voucher was actually spent, keyed by code. A coupon is
+    // often redeemed weeks after it was issued, so this reads to today rather
+    // than to `to` — otherwise a past window would look unspent. The amount is
+    // what Shopify actually applied, which can be less than the voucher's face
+    // value (a 915.81 voucher applied as 899).
+    type CbRow = { order_date: string; codes: { code?: string; amount?: string }[] | null };
+    const redeemRows = await pageAll<CbRow>(() =>
+      sb
+        .from("orders")
+        .select("order_date,codes:raw->discount_codes")
+        .eq("channel", "online")
+        .gte("order_date", fetchFrom)
+    );
+    const spentByCode = new Map<string, number>();
+    for (const o of redeemRows) {
+      for (const d of o.codes ?? []) {
+        const code = (d?.code ?? "").trim();
+        if (!CASHBACK_RE.test(code)) continue;
+        const k = code.toLowerCase();
+        spentByCode.set(k, (spentByCode.get(k) ?? 0) + Number(d.amount || 0));
+      }
+    }
 
     // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
     // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
     // mostly on the website — so this is the other half of the cashback story,
     // not the same number as the redemption rows above. Missing table (before
     // migration_v11 is run) degrades to zero rather than failing the page. ---
-    const { data: cbIssuedRows } = await sb
-      .from("cashback_coupons")
-      .select("issued_day,branch,discount_amount,invoice_amount,used")
-      .gte("issued_day", fetchFrom)
-      .lte("issued_day", to);
-    const issued = ((cbIssuedRows ?? []) as {
+    const cbIssuedRows = await pageAll<{
       issued_day: string;
       branch: string | null;
+      code: string;
       discount_amount: number;
       invoice_amount: number;
-      used: boolean;
-    }[]).map((r) => ({
+    }>(() =>
+      sb
+        .from("cashback_coupons")
+        .select("issued_day,branch,code,discount_amount,invoice_amount")
+        .gte("issued_day", fetchFrom)
+        .lte("issued_day", to)
+    );
+    const issued = cbIssuedRows.map((r) => ({
       day: (r.issued_day ?? "").slice(0, 10),
       branch: r.branch ?? "",
-      value: Number(r.invoice_amount || 0), // what the order itself was worth
-      amount: Number(r.discount_amount || 0), // the 5% it earned
-      used: Boolean(r.used),
+      purchase: Number(r.invoice_amount || 0), // the order that earned the cashback
+      earned: Number(r.discount_amount || 0), // the 5% put on the voucher
+      spent: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0, // how much of it has gone
     }));
 
     // Channels: physical branches (sorted) first, then Website (online).
@@ -182,56 +204,47 @@ export async function GET(req: NextRequest) {
     const rawToColumn = new Map(branchRows.map((r) => [r.branch, r.label]));
 
     /**
-     * Cashback orders for one window, offline and online in the same two rows:
-     *  - branch columns = branch orders that earned a voucher (Odoo)
-     *  - Website        = orders that paid with one (Shopify)
-     * `value` is the order before any discount on both sides, so the two are
-     * comparable. Total counts every branch, including the 20-odd that have no
-     * sales rows and so get no column of their own.
+     * Cashback for one window, per issuing branch. Every figure hangs off the
+     * branch order that earned the voucher, which is why these are branch-side
+     * rows: cashback is issued in the shops, never on the website.
+     *
+     *  purchases — what those orders were worth
+     *  earned    — the 5% put onto the vouchers
+     *  spent     — how much of that has actually been used since
+     *
+     * spent comes from the Shopify orders the codes turn up in, so it is the
+     * amount really applied, not the face value: a customer given 5,000 who
+     * spends 4,000 counts as 4,000 here. Total covers every branch, including
+     * the 20-odd with no sales rows and so no column of their own.
      */
     const cashbackAgg = (pf: string, pt: string) => {
-      const out: Record<string, { orders: number; value: number }> = {};
-      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
-      let tOrders = 0;
-      let tValue = 0;
+      const blank = () => ({ purchases: 0, earned: 0, spent: 0 });
+      const out: Record<string, ReturnType<typeof blank>> = {};
+      for (const label of branchLabels) out[label] = blank();
+      out[WEBSITE] = blank(); // the website issues no cashback
+      const total = blank();
 
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
-        tOrders += 1;
-        tValue += c.value;
+        total.purchases += c.purchase;
+        total.earned += c.earned;
+        total.spent += c.spent;
         const col = rawToColumn.get(c.branch);
         if (col && out[col]) {
-          out[col].orders += 1;
-          out[col].value += c.value;
+          out[col].purchases += c.purchase;
+          out[col].earned += c.earned;
+          out[col].spent += c.spent;
         }
       }
+      out.Total = total;
 
-      const web = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
-      out[WEBSITE] = { orders: web.length, value: web.reduce((s, o) => s + o.value, 0) };
-      tOrders += web.length;
-      tValue += out[WEBSITE].value;
-
-      out.Total = { orders: tOrders, value: tValue };
-      return out;
-    };
-
-    /**
-     * Orders that were actually PAID with a cashback voucher, as opposed to
-     * the orders that earned one. Website is real: the coupon code shows up in
-     * the Shopify order. The branch columns stay zero because Odoo's cashback
-     * report carries only a `used` flag — no redeeming invoice, no redemption
-     * date, no amount — so an offline redemption cannot be placed on a day or
-     * a branch. Add those fields to /api/analytics/cashback-report and this
-     * row fills itself in.
-     */
-    const cashbackUsedAgg = (pf: string, pt: string) => {
-      const out: Record<string, { orders: number; value: number }> = {};
-      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
-      const web = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
-      const value = web.reduce((s, o) => s + o.value, 0);
-      out[WEBSITE] = { orders: web.length, value };
-      out.Total = { orders: web.length, value };
-      return out;
+      // One block per row the table draws, so the client stays a dumb printer.
+      const pick = (k: "purchases" | "earned" | "spent") => {
+        const b: Record<string, { orders: number; value: number }> = {};
+        for (const [col, v] of Object.entries(out)) b[col] = { orders: 0, value: v[k] };
+        return b;
+      };
+      return { purchases: pick("purchases"), earned: pick("earned"), spent: pick("spent") };
     };
 
     return NextResponse.json({
@@ -241,8 +254,7 @@ export async function GET(req: NextRequest) {
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
-      cashback: cashbackAgg(from, to), // cashback orders for the picked day/range
-      cashbackUsed: cashbackUsedAgg(from, to), // orders that PAID with a voucher
+      cashback: cashbackAgg(from, to),
       meta: {
         from,
         to,

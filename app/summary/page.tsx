@@ -14,8 +14,9 @@ interface SummaryResp {
   mtd: Block;
   lastMonth: Block; // same day / same range, one month back
   lastMonthMtd: Block; // last month measured to the same day of the month
-  cashback: Block; // cashback orders — branches offline, Website online
-  cashbackUsed: Block; // orders that paid with a voucher (website only — see legend)
+  // Cashback, per issuing branch: what the earning orders were worth, the
+  // cashback put on the vouchers, and how much of it has been spent since.
+  cashback: { purchases: Block; earned: Block; spent: Block };
   meta: {
     from: string;
     to: string;
@@ -51,8 +52,7 @@ const TINT = {
   value: "bg-[#7a3f5d]", // MTD Value   ↔  Amount Last Month
   aovDay: "bg-[#4a5588]", // Avg Order Value / day  ↔  its last-month row
   aovMonth: "bg-[#3c6f8c]", // Avg Order Value / month (MTD) ↔ last month MTD
-  cashback: "bg-[#4d6b2f]", // Cashback orders — offline and online
-  cashbackUsed: "bg-[#7c5320]", // Orders that paid with a cashback voucher
+  cashback: "bg-[#4d6b2f]", // Cashback purchases / earned / spent
 } as const;
 
 export default function SummaryPage() {
@@ -253,34 +253,28 @@ export default function SummaryPage() {
                 accent
                 tint={TINT.aovMonth}
               />
-              {/* Cashback, offline (branch columns) and online (Website) together. */}
+              {/* Cashback, per issuing branch: purchases → earned → spent. */}
               <DataRow
-                label={<>Orders of Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Total Purchases from Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
-                block={data.cashback}
-                kind="orders"
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Total Amount of Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
-                cols={cols}
-                block={data.cashback}
+                block={data.cashback.purchases}
                 kind="value"
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Orders Paid with Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Cashback Earned <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
-                block={data.cashbackUsed}
-                kind="orders"
-                tint={TINT.cashbackUsed}
+                block={data.cashback.earned}
+                kind="value"
+                tint={TINT.cashback}
               />
               <DataRow
-                label={<>Amount of Orders Paid with Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Cashback Used <span className="font-normal opacity-80">of that earned</span></>}
                 cols={cols}
-                block={data.cashbackUsed}
+                block={data.cashback.spent}
                 kind="value"
-                tint={TINT.cashbackUsed}
+                accent
+                tint={TINT.cashback}
               />
             </tbody>
           </table>
@@ -294,14 +288,14 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Orders of Cashback: branch columns = orders that earned a voucher, Website = orders that paid with one.
-            Cashback runs at 20+ branches but only branches with sales rows get a column, so Total covers them all and
-            can exceed the columns beside it.
+            · Cashback rows follow the branch that issued the voucher: what the earning orders were worth, the 5% put on
+            the vouchers, and how much of that has been spent since — the actual amount applied, so a customer given
+            5,000 who spends 4,000 counts as 4,000. Used is not capped to the window: a voucher issued today and spent
+            next month still lands on today.
           </span>
           <span>
-            · Orders Paid with Cashback is website-only: Odoo&apos;s cashback report says a coupon was used but not on
-            which order, day or branch, so an offline redemption cannot be placed in a column. Amounts on both rows are
-            the order before any discount.
+            · The website issues no cashback, so its column is blank on these rows. Cashback runs at 20+ branches but
+            only branches with sales rows get a column, so Total covers them all and can exceed the columns beside it.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
@@ -310,8 +304,7 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovDay}`} /> avg order value / {data.meta.single ? "day" : "range"}
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovMonth}`} /> avg order value / month
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback earned/used
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashbackUsed}`} /> paid with cashback
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>
