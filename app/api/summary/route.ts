@@ -215,6 +215,25 @@ export async function GET(req: NextRequest) {
       return out;
     };
 
+    /**
+     * Orders that were actually PAID with a cashback voucher, as opposed to
+     * the orders that earned one. Website is real: the coupon code shows up in
+     * the Shopify order. The branch columns stay zero because Odoo's cashback
+     * report carries only a `used` flag — no redeeming invoice, no redemption
+     * date, no amount — so an offline redemption cannot be placed on a day or
+     * a branch. Add those fields to /api/analytics/cashback-report and this
+     * row fills itself in.
+     */
+    const cashbackUsedAgg = (pf: string, pt: string) => {
+      const out: Record<string, { orders: number; value: number }> = {};
+      for (const label of branchLabels) out[label] = { orders: 0, value: 0 };
+      const web = cashbackOrders.filter((o) => o.day >= pf && o.day <= pt);
+      const value = web.reduce((s, o) => s + o.value, 0);
+      out[WEBSITE] = { orders: web.length, value };
+      out.Total = { orders: web.length, value };
+      return out;
+    };
+
     return NextResponse.json({
       ok: true,
       channels,
@@ -223,6 +242,7 @@ export async function GET(req: NextRequest) {
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
       cashback: cashbackAgg(from, to), // cashback orders for the picked day/range
+      cashbackUsed: cashbackUsedAgg(from, to), // orders that PAID with a voucher
       meta: {
         from,
         to,

@@ -15,6 +15,7 @@ interface SummaryResp {
   lastMonth: Block; // same day / same range, one month back
   lastMonthMtd: Block; // last month measured to the same day of the month
   cashback: Block; // cashback orders — branches offline, Website online
+  cashbackUsed: Block; // orders that paid with a voucher (website only — see legend)
   meta: {
     from: string;
     to: string;
@@ -51,6 +52,7 @@ const TINT = {
   aovDay: "bg-[#4a5588]", // Avg Order Value / day  ↔  its last-month row
   aovMonth: "bg-[#3c6f8c]", // Avg Order Value / month (MTD) ↔ last month MTD
   cashback: "bg-[#4d6b2f]", // Cashback orders — offline and online
+  cashbackUsed: "bg-[#7c5320]", // Orders that paid with a cashback voucher
 } as const;
 
 export default function SummaryPage() {
@@ -266,6 +268,20 @@ export default function SummaryPage() {
                 kind="value"
                 tint={TINT.cashback}
               />
+              <DataRow
+                label={<>Orders Paid with Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                block={data.cashbackUsed}
+                kind="orders"
+                tint={TINT.cashbackUsed}
+              />
+              <DataRow
+                label={<>Amount of Orders Paid with Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                block={data.cashbackUsed}
+                kind="value"
+                tint={TINT.cashbackUsed}
+              />
             </tbody>
           </table>
         </div>
@@ -278,9 +294,14 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback rows: branch columns = orders that earned a voucher, Website = orders that paid with one. Amounts
-            are the order before any discount. Cashback runs at 20+ branches but only branches with sales rows get a
-            column, so Total covers them all and can exceed the columns beside it.
+            · Orders of Cashback: branch columns = orders that earned a voucher, Website = orders that paid with one.
+            Cashback runs at 20+ branches but only branches with sales rows get a column, so Total covers them all and
+            can exceed the columns beside it.
+          </span>
+          <span>
+            · Orders Paid with Cashback is website-only: Odoo&apos;s cashback report says a coupon was used but not on
+            which order, day or branch, so an offline redemption cannot be placed in a column. Amounts on both rows are
+            the order before any discount.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">
@@ -289,7 +310,8 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.value}`} /> value
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovDay}`} /> avg order value / {data.meta.single ? "day" : "range"}
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.aovMonth}`} /> avg order value / month
-            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback earned/used
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashbackUsed}`} /> paid with cashback
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>

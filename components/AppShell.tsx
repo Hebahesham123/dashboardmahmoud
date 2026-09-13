@@ -19,6 +19,7 @@ const INQUIRIES_ITEM: NavItem[] = INQUIRIES_URL
 const NAV: NavItem[] = [
   { href: "/", label: "Overview", icon: "📊" },
   { href: "/summary", label: "Summary", icon: "📋" },
+  { href: "/orders", label: "Orders", icon: "🧾" },
   { href: "/daily", label: "Daily Report", icon: "📅" },
   { href: "/offline", label: "Offline (Odoo)", icon: "🏬" },
   { href: "/products", label: "Products", icon: "🛍️" },
