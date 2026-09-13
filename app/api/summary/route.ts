@@ -104,99 +104,55 @@ export async function GET(req: NextRequest) {
       .lte("day", to);
     const online = (dmRows ?? []) as { day: string; total_sales: number; orders_count: number }[];
 
-    // --- Orders that PAID with a cashback voucher. These are website orders:
-    // the coupon code lands in the Shopify order's discount_codes. `purchase`
-    // is the order before any discount; `spent` is what the voucher actually
-    // covered, which can be under its face value (915.81 applied as 899). ---
+    // --- Orders that PAID with a cashback voucher, both ways.
+    // Online: the voucher code lands in the Shopify order's discount_codes.
+    // Offline: Odoo puts the redemption on the redeeming invoice as a negative
+    // "per point" line, which /api/sync-cashback stores per invoice.
+    // Everything below is counted on the day the purchase happened, so all
+    // three rows describe one set of orders. ---
     type CbRow = {
       order_date: string;
       total_price: number;
       total_discounts: number;
       codes: { code?: string; amount?: string }[] | null;
     };
-    // Read to today, not to `to`: a voucher issued inside the window is often
-    // spent after it, and "how much of what we gave has come back" has to count
-    // that. `spent` is what Shopify actually applied, which can be under the
-    // voucher's face value (915.81 applied as 899) but never over it.
     const redeemRows = await pageAll<CbRow>(() =>
       sb
         .from("orders")
         .select("order_date,total_price,total_discounts,codes:raw->discount_codes")
         .eq("channel", "online")
         .gte("order_date", fetchFrom)
+        .lte("order_date", to)
     );
-    const cashbackOrders = redeemRows
-      .map((o) => ({
-        purchase: Number(o.total_price || 0) + Number(o.total_discounts || 0),
-        hits: (o.codes ?? [])
-          .filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()))
-          .map((d) => ({ code: (d.code ?? "").trim().toLowerCase(), amount: Number(d.amount || 0) })),
-      }))
-      .filter((o) => o.hits.length > 0);
+    const onlineCashback = redeemRows
+      .map((o) => {
+        const hits = (o.codes ?? []).filter((d) => CASHBACK_RE.test((d?.code ?? "").trim()));
+        return {
+          day: (o.order_date ?? "").slice(0, 10),
+          // The order before any discount, so it is the same measure as the
+          // branches' invoice_gross.
+          purchase: Number(o.total_price || 0) + Number(o.total_discounts || 0),
+          // What the voucher actually covered — can be under its face value.
+          spent: hits.reduce((sum, d) => sum + Number(d.amount || 0), 0),
+          hit: hits.length > 0,
+        };
+      })
+      .filter((o) => o.hit);
 
-    // How much has come back on each individual voucher.
-    const spentByCode = new Map<string, number>();
-    for (const o of cashbackOrders) {
-      for (const h of o.hits) spentByCode.set(h.code, (spentByCode.get(h.code) ?? 0) + h.amount);
-    }
-
-    // --- Cashback redeemed IN THE SHOPS, from the redeeming invoice itself:
-    // real date, real branch, real amount, and the basket it paid for. Read
-    // from fetchFrom with no upper bound, because a voucher issued inside the
-    // window is often spent after it. ---
-    const redeemedRows = await pageAll<{
-      coupon_code: string | null;
+    // Missing table (before migration_v12 is run) degrades to zero rather than
+    // failing the page.
+    const offlineCashback = await pageAll<{
+      day: string;
+      branch: string | null;
       cashback_used: number;
       invoice_gross: number;
     }>(() =>
       sb
         .from("cashback_redemptions")
-        .select("coupon_code,cashback_used,invoice_gross")
+        .select("day,branch,cashback_used,invoice_gross")
         .gte("day", fetchFrom)
+        .lte("day", to)
     );
-    const offlineByCode = new Map<string, { used: number; gross: number }>();
-    for (const r of redeemedRows) {
-      const code = (r.coupon_code ?? "").trim().toLowerCase();
-      if (!code) continue;
-      const e = offlineByCode.get(code) ?? { used: 0, gross: 0 };
-      e.used += Number(r.cashback_used || 0);
-      e.gross += Number(r.invoice_gross || 0);
-      offlineByCode.set(code, e);
-    }
-
-    // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
-    // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
-    // mostly on the website — so this is the other half of the cashback story,
-    // not the same number as the redemption rows above. Missing table (before
-    // migration_v11 is run) degrades to zero rather than failing the page. ---
-    const cbIssuedRows = await pageAll<{
-      issued_day: string;
-      branch: string | null;
-      code: string;
-      discount_amount: number;
-      used: boolean;
-    }>(() =>
-      sb
-        .from("cashback_coupons")
-        .select("issued_day,branch,code,discount_amount,used")
-        .gte("issued_day", fetchFrom)
-        .lte("issued_day", to)
-    );
-    const issued = cbIssuedRows.map((r) => ({
-      day: (r.issued_day ?? "").slice(0, 10),
-      branch: r.branch ?? "",
-      earned: Number(r.discount_amount || 0), // the 5% put on the voucher
-      code: (r.code ?? "").trim().toLowerCase(),
-      // What has come back on this very voucher — so used can never outrun
-      // earned, however long after the window it was spent.
-      spentOnline: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0,
-      // Spent in a shop — taken from the redeeming invoice, not from the
-      // cashback report's `used` flag, which says nothing about when, where or
-      // on what, and is wrong besides: vouchers observed redeemed still read
-      // used = false.
-      spentOffline: offlineByCode.get((r.code ?? "").trim().toLowerCase())?.used ?? 0,
-      purchaseOffline: offlineByCode.get((r.code ?? "").trim().toLowerCase())?.gross ?? 0,
-    }));
 
     // Channels: physical branches (sorted) first, then Website (online).
     const branchLabels = [...new Set(branchRows.map((r) => r.label))].sort((a, b) => a.localeCompare(b));
@@ -246,98 +202,59 @@ export async function GET(req: NextRequest) {
     const rawToColumn = new Map(branchRows.map((r) => [r.branch, r.label]));
 
     /**
-     * Cashback for one window. Each row sits where the thing it measures
-     * actually happens, which is why a row is filled on one side and blank on
-     * the other — cashback is earned in the shops and spent on the website.
-     *
-     * All three follow ONE set of vouchers: the ones the shop issued inside the
-     * window. Measuring Used against whatever was spent in the window instead
-     * let a shop that gave 1,000 show 2,000 used, because the extra came from
-     * older vouchers. Tying them together makes Used ≤ Earned by construction.
-     *
-     *  earned    — the 5% put onto those vouchers
-     *  spent     — how much of them has come back, whenever it was spent, and
-     *              the amount actually applied: handed 5,000, spends 4,000,
-     *              counts as 4,000
-     *  purchases — what the orders those vouchers paid for were worth
-     *
-     * Earned shows under the shops that gave the vouchers out, and again under
-     * Website for the vouchers that were then spent online — the same cashback
-     * counted twice across the row, because otherwise the Website column shows
-     * spending with nothing behind it. Total counts it once. Used shows on both
-     * sides and does partition: the Website figure is what Shopify applied, the
-     * branch figures are vouchers Odoo flagged used that never appear in an
-     * online order — roughly a quarter of redemptions, and invisible while Used
-     * was website-only.
-     *
-     * Purchases has both sides too: the Shopify order for an online redemption,
-     * and for a shop one the invoice the discount line sits on.
+     * Cashback orders for one window, counted on the day of the purchase:
+     * how many there were, how much cashback they spent, and what they came
+     * to. Branch columns are shop redemptions, Website is online ones, and
+     * every row describes the same set of orders — so the three read down a
+     * column together instead of one of them answering a different question.
      *
      * Branch columns exist only for branches that also have sales rows, so
-     * Total covers all 20-odd and can exceed the columns beside it.
+     * Total covers them all and can exceed the columns beside it.
      */
     const cashbackAgg = (pf: string, pt: string) => {
-      const blank = () => ({ purchases: 0, earned: 0, spent: 0 });
+      const blank = () => ({ orders: 0, spent: 0, purchases: 0 });
       const out: Record<string, ReturnType<typeof blank>> = {};
       for (const label of branchLabels) out[label] = blank();
       const total = blank();
 
-      // One pass over the vouchers issued in the window: what they were worth,
-      // what has come back on them, and what they bought. All three follow the
-      // same vouchers, so Used can never exceed Earned.
-      // Earned sits under the shop that handed the voucher out. So does the
-      // part of Used that was spent in a shop.
-      const cohort = new Set<string>();
-      let spentOnline = 0;
-      let earnedSpentOnline = 0; // face value of the vouchers spent online
-      for (const c of issued) {
-        if (c.day < pf || c.day > pt) continue;
-        cohort.add(c.code);
-        spentOnline += c.spentOnline;
-        if (c.spentOnline > 0) earnedSpentOnline += c.earned;
-        total.earned += c.earned;
-        total.spent += c.spentOnline + c.spentOffline;
-        total.purchases += c.purchaseOffline;
-        const col = rawToColumn.get(c.branch);
+      for (const r of offlineCashback) {
+        const day = (r.day ?? "").slice(0, 10);
+        if (day < pf || day > pt) continue;
+        const used = Number(r.cashback_used || 0);
+        const gross = Number(r.invoice_gross || 0);
+        total.orders += 1;
+        total.spent += used;
+        total.purchases += gross;
+        const col = rawToColumn.get(r.branch ?? "");
         if (col && out[col]) {
-          out[col].earned += c.earned;
-          out[col].spent += c.spentOffline;
-          out[col].purchases += c.purchaseOffline;
+          out[col].orders += 1;
+          out[col].spent += used;
+          out[col].purchases += gross;
         }
       }
 
-      // The online half of Used, and the orders behind it, sit under Website.
-      // An order counts once however many of its vouchers are in this cohort.
       const web = blank();
-      web.spent = spentOnline;
-      // The cashback behind the online spending. It was still handed out in a
-      // shop, so it is also counted in that shop's Earned — this is a slice of
-      // the branch columns shown again, not an addition to them. Without it the
-      // Website column claimed spending with no cashback behind it.
-      web.earned = earnedSpentOnline;
-      for (const o of cashbackOrders) {
-        if (!o.hits.some((h) => cohort.has(h.code))) continue;
-        total.purchases += o.purchase;
+      for (const o of onlineCashback) {
+        if (o.day < pf || o.day > pt) continue;
+        web.orders += 1;
+        web.spent += o.spent;
         web.purchases += o.purchase;
       }
       out[WEBSITE] = web;
+      total.orders += web.orders;
+      total.spent += web.spent;
+      total.purchases += web.purchases;
       out.Total = total;
 
       // One block per row the table draws, so the client stays a dumb printer.
-      // `na` marks the side a row cannot apply to — the shops never redeem in
-      // a way Odoo reports, the website never issues — so the table can print
-      // a dash there instead of a zero that reads like missing data.
-      const pick = (k: "purchases" | "earned" | "spent") => {
-        const b: Record<string, { orders: number; value: number; na?: boolean }> = {};
+      const pick = (k: "orders" | "spent" | "purchases") => {
+        const b: Record<string, { orders: number; value: number }> = {};
         for (const [col, v] of Object.entries(out)) {
-          // Earned is a shop fact, Used and Purchases are website facts; the
-          // other side of each gets a dash rather than a misleading zero.
-          const na = false; // every row now has both sides
-          b[col] = { orders: 0, value: v[k], na };
+          b[col] = { orders: k === "orders" ? v.orders : 0, value: k === "orders" ? 0 : v[k] };
         }
         return b;
       };
-      return { purchases: pick("purchases"), earned: pick("earned"), spent: pick("spent") };
+      return { orders: pick("orders"), spent: pick("spent"), purchases: pick("purchases") };
     };
 
     return NextResponse.json({
