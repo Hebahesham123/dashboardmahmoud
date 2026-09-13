@@ -230,9 +230,10 @@ export async function GET(req: NextRequest) {
      *              counts as 4,000
      *  purchases — what the orders those vouchers paid for were worth
      *
-     * Redemption happens on the website, but crediting it there would leave a
-     * column claiming cashback was spent where none was ever earned, so it is
-     * credited to the issuing shop and the website shows a dash throughout.
+     * Earned shows under the shops that gave the vouchers out; Used and
+     * Purchases show under Website, where they are spent. Each row therefore
+     * has a side it cannot speak for, which prints as a dash. Total is the
+     * honest line to read across: given X, Y of it came back, on orders worth Z.
      *
      * Branch columns exist only for branches that also have sales rows, so
      * Total covers all 20-odd and can exceed the columns beside it.
@@ -246,31 +247,28 @@ export async function GET(req: NextRequest) {
       // One pass over the vouchers issued in the window: what they were worth,
       // what has come back on them, and what they bought. All three follow the
       // same vouchers, so Used can never exceed Earned.
-      const cohort = new Map<string, string>(); // voucher code -> issuing shop
+      // Earned sits under the shop that handed the voucher out.
+      const cohort = new Set<string>();
       for (const c of issued) {
         if (c.day < pf || c.day > pt) continue;
-        cohort.set(c.code, c.branch);
+        cohort.add(c.code);
         total.earned += c.earned;
         total.spent += c.spent;
         const col = rawToColumn.get(c.branch);
-        if (col && out[col]) {
-          out[col].earned += c.earned;
-          out[col].spent += c.spent;
-        }
+        if (col && out[col]) out[col].earned += c.earned;
       }
 
-      // An order counts once, against the shop behind whichever of its
-      // vouchers belongs to this cohort — an order paying with several
-      // vouchers has never mixed shops, so there is nothing to apportion.
+      // Used and Purchases sit under Website, because that is where a voucher
+      // is spent — every redemption we can see is an online order. An order
+      // counts once however many of its vouchers belong to this cohort.
+      const web = blank();
       for (const o of cashbackOrders) {
-        const hit = o.hits.find((h) => cohort.has(h.code));
-        if (!hit) continue;
+        if (!o.hits.some((h) => cohort.has(h.code))) continue;
         total.purchases += o.purchase;
-        const col = rawToColumn.get(cohort.get(hit.code)!);
-        if (col && out[col]) out[col].purchases += o.purchase;
+        web.purchases += o.purchase;
       }
-
-      out[WEBSITE] = blank(); // cashback is a shop programme end to end
+      web.spent = total.spent;
+      out[WEBSITE] = web;
       out.Total = total;
 
       // One block per row the table draws, so the client stays a dumb printer.
@@ -280,7 +278,11 @@ export async function GET(req: NextRequest) {
       const pick = (k: "purchases" | "earned" | "spent") => {
         const b: Record<string, { orders: number; value: number; na?: boolean }> = {};
         for (const [col, v] of Object.entries(out)) {
-          b[col] = { orders: 0, value: v[k], na: col === WEBSITE };
+          // Earned is a shop fact, Used and Purchases are website facts; the
+          // other side of each gets a dash rather than a misleading zero.
+          const na =
+            col !== "Total" && (k === "earned" ? col === WEBSITE : col !== WEBSITE);
+          b[col] = { orders: 0, value: v[k], na };
         }
         return b;
       };

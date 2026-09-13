@@ -288,10 +288,10 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback rows belong to the shop that issued the voucher: what it gave out, how much of that has come back
-            (the amount actually applied — handed 5,000, spends 4,000, counts as 4,000), and what those orders were
-            worth. Vouchers are spent on the website, but it is credited back to the issuing shop so a column reads
-            straight down; the website issues no cashback, so it shows “—”.
+            · Cashback is given out in the shops and spent on the website, so Earned shows under the branches and Used
+            and Purchases show under Website. Each row has a side it cannot speak for, which prints “—” rather than a
+            zero. Read Total across: given X, Y of it came back, on orders worth Z. Used is the amount actually applied
+            — handed 5,000, spends 4,000, counts as 4,000.
           </span>
           <span>
             · All three rows follow the same vouchers — the ones issued in the period — so Used can never exceed Earned.
