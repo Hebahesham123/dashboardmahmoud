@@ -245,9 +245,16 @@ export async function GET(req: NextRequest) {
       out.Total = total;
 
       // One block per row the table draws, so the client stays a dumb printer.
+      // `na` marks the side a row cannot apply to — the shops never redeem in
+      // a way Odoo reports, the website never issues — so the table can print
+      // a dash there instead of a zero that reads like missing data.
       const pick = (k: "purchases" | "earned" | "spent") => {
-        const b: Record<string, { orders: number; value: number }> = {};
-        for (const [col, v] of Object.entries(out)) b[col] = { orders: 0, value: v[k] };
+        const b: Record<string, { orders: number; value: number; na?: boolean }> = {};
+        for (const [col, v] of Object.entries(out)) {
+          const isWeb = col === WEBSITE;
+          const na = col !== "Total" && (k === "earned" ? isWeb : !isWeb);
+          b[col] = { orders: 0, value: v[k], na };
+        }
         return b;
       };
       return { purchases: pick("purchases"), earned: pick("earned"), spent: pick("spent") };

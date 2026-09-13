@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { fmtNum } from "@/lib/format";
 
-type Cell = { orders: number; value: number };
+type Cell = { orders: number; value: number; na?: boolean }; // na = row does not apply to this channel
 type Block = Record<string, Cell>;
 interface SummaryResp {
   ok: boolean;
@@ -289,8 +289,9 @@ export default function SummaryPage() {
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
             · Cashback is earned in the shops and spent on the website, so each row shows numbers on the side where it
-            happens. Purchases and Used sit under Website — orders that paid with a voucher, and what the voucher
-            covered (a customer handed 5,000 who spends 4,000 counts as 4,000). Earned sits under the branches.
+            happens and a “—” on the side it cannot apply to. Purchases and Used sit under Website — orders that paid
+            with a voucher, and what the voucher covered (a customer handed 5,000 who spends 4,000 counts as 4,000).
+            Earned sits under the branches: all 1,271 vouchers so far were issued in a shop, never online.
           </span>
           <span>
             · Branch cashback redemptions are not in these rows: Odoo reports a coupon as used without saying on which
@@ -367,8 +368,18 @@ function DataRow({
       </th>
       {cols.map((c) => {
         const pick = (m: Cell | undefined) => (!m ? 0 : kind === "orders" ? m.orders : m.value);
-        const v = pick(block[c]);
+        const cell = block[c];
+        const v = pick(cell);
         const isTotal = c === "Total";
+        // A dash, not a zero: the shops issue cashback and the website spends
+        // it, so each cashback row genuinely has nothing to say on one side.
+        if (cell?.na) {
+          return (
+            <td key={c} className={`${BORDER} bg-white px-1 py-2.5 text-center font-medium text-gray-300 sm:px-3`}>
+              —
+            </td>
+          );
+        }
         let cls = "bg-white text-gray-800";
         if (compareBlock) {
           const cv = pick(compareBlock[c]);
