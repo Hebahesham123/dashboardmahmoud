@@ -290,15 +290,14 @@ export default function SummaryPage() {
           <span>
             · Cashback is given out in the shops, so Earned sits under the branches — and again under Website for the
             vouchers later spent online, so that column has the cashback behind its own spending. That slice is the same
-            money shown twice across the row; Total counts it once. Used does split cleanly: Website is what Shopify
-            applied, the branch figures are vouchers Odoo flagged used that never reached an online order.
+            money shown twice across the row; Total counts it once. Used and Purchases split cleanly: Website from the
+            Shopify order, the branches from the redeeming shop invoice.
           </span>
           <span>
             · All three rows follow the same vouchers — the ones issued in the period — so Used can never exceed Earned.
             Used counts a voucher whenever it was spent, including after the period, so recent days start near zero and
-            fill in. Purchases is website-only: Odoo names no redeeming invoice for a shop redemption, so the basket
-            behind one is unknown, and a shop redemption counts at the voucher&apos;s full face value. Cashback runs at
-            20+ branches but only branches with sales rows get a column, so Total covers them all.
+            fill in. Cashback runs at 20+ branches but only branches with sales rows get a column, so Total covers them
+            all and can exceed the columns beside it.
           </span>
           <span>· “Last Month” rows = the same {data.meta.single ? "day" : "range"} one month back</span>
           <span className="inline-flex items-center gap-1">

@@ -266,3 +266,104 @@ export function aggregateOffline(
     .map(([day, e]) => ({ day, invoices: e.invoices.size, amount: e.amount, items: e.items }))
     .sort((a, b) => a.day.localeCompare(b.day));
 }
+
+/**
+ * A branch cashback redemption. Odoo records it as a negative invoice line —
+ * "0.05 LE per point on specific products" — on the invoice it paid for, which
+ * is the only place the real redemption date, branch and amount exist. The
+ * cashback report's `used` flag knows none of that, and is unreliable besides:
+ * coupons observed redeemed still come back used = false.
+ */
+export interface CashbackRedemption {
+  invoice_number: string;
+  day: string;
+  branch: string | null;
+  customer_id: number | null;
+  customer_name: string | null;
+  cashback_used: number; // positive
+  invoice_gross: number; // the basket before the cashback came off
+}
+
+/** Matches the loyalty discount line. Override if Odoo renames the product. */
+const REDEMPTION_LINE = new RegExp(
+  process.env.CASHBACK_LINE_PATTERN || "per point|cashback",
+  "i"
+);
+
+/**
+ * Invoice lines from the analytics feed, which covers every branch — unlike
+ * /api/nshome/invoices, which returns only a handful. It answers to the
+ * cashback token, not the NS Home one.
+ */
+export async function fetchAnalyticsInvoices(
+  dateFrom: string,
+  dateTo: string
+): Promise<OdooInvoiceLine[]> {
+  const { base, key } = cashbackConfig();
+  const path = process.env.ODOO_ANALYTICS_INVOICES_PATH || "/api/analytics/invoices";
+  const all: OdooInvoiceLine[] = [];
+  let page = 1;
+
+  for (let guard = 0; guard < 2000; guard++) {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "API-Key": key },
+      body: JSON.stringify({ page, limit: 500, date_from: dateFrom, date_to: dateTo }),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Odoo analytics ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const j = await res.json();
+    const payload = (j.result ?? j) as {
+      status: string;
+      error?: string;
+      data?: OdooInvoiceLine[];
+      pagination?: { page: number; total_pages: number };
+    };
+    if (payload.status !== "success") throw new Error(payload.error || "Odoo returned an error");
+    all.push(...(payload.data ?? []));
+    const p = payload.pagination;
+    if (!p || page >= p.total_pages) break;
+    page += 1;
+  }
+  return all;
+}
+
+/**
+ * Roll invoice lines up into one redemption per invoice: the cashback that came
+ * off, and the basket it came off. Shopify invoices are skipped — an online
+ * redemption is already read from the Shopify order itself, and counting the
+ * Odoo mirror of it as well would double it.
+ */
+export function extractCashbackRedemptions(rows: OdooInvoiceLine[]): CashbackRedemption[] {
+  const byInvoice = new Map<string, OdooInvoiceLine[]>();
+  for (const r of rows) {
+    const inv = (r.invoice_number ?? "").trim();
+    if (!inv) continue;
+    const list = byInvoice.get(inv);
+    if (list) list.push(r);
+    else byInvoice.set(inv, [r]);
+  }
+
+  const out: CashbackRedemption[] = [];
+  for (const [invoice_number, lines] of byInvoice) {
+    if (isRefund(invoice_number)) continue;
+    const branch = lines[0].branch ?? "";
+    if (/shopify/i.test(branch)) continue;
+    const used = lines
+      .filter((l) => REDEMPTION_LINE.test(l.product_name ?? "") && Number(l.price_total) < 0)
+      .reduce((s, l) => s + Math.abs(Number(l.price_total || 0)), 0);
+    if (used <= 0) continue;
+    out.push({
+      invoice_number,
+      day: (lines[0].invoice_date ?? "").slice(0, 10),
+      branch,
+      customer_id: lines[0].customer_id ?? null,
+      customer_name: lines[0].customer_name ?? null,
+      cashback_used: used,
+      invoice_gross: lines
+        .filter((l) => Number(l.price_total) > 0)
+        .reduce((s, l) => s + Number(l.price_total || 0), 0),
+    });
+  }
+  return out.filter((r) => r.day);
+}

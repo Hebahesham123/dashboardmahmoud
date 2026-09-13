@@ -140,6 +140,30 @@ export async function GET(req: NextRequest) {
       for (const h of o.hits) spentByCode.set(h.code, (spentByCode.get(h.code) ?? 0) + h.amount);
     }
 
+    // --- Cashback redeemed IN THE SHOPS, from the redeeming invoice itself:
+    // real date, real branch, real amount, and the basket it paid for. Read
+    // from fetchFrom with no upper bound, because a voucher issued inside the
+    // window is often spent after it. ---
+    const redeemedRows = await pageAll<{
+      coupon_code: string | null;
+      cashback_used: number;
+      invoice_gross: number;
+    }>(() =>
+      sb
+        .from("cashback_redemptions")
+        .select("coupon_code,cashback_used,invoice_gross")
+        .gte("day", fetchFrom)
+    );
+    const offlineByCode = new Map<string, { used: number; gross: number }>();
+    for (const r of redeemedRows) {
+      const code = (r.coupon_code ?? "").trim().toLowerCase();
+      if (!code) continue;
+      const e = offlineByCode.get(code) ?? { used: 0, gross: 0 };
+      e.used += Number(r.cashback_used || 0);
+      e.gross += Number(r.invoice_gross || 0);
+      offlineByCode.set(code, e);
+    }
+
     // --- Cashback issued at the branches (Odoo ns_loyalty_cashback).
     // A coupon is EARNED here (5% of a branch invoice) and redeemed later,
     // mostly on the website — so this is the other half of the cashback story,
@@ -166,14 +190,12 @@ export async function GET(req: NextRequest) {
       // What has come back on this very voucher — so used can never outrun
       // earned, however long after the window it was spent.
       spentOnline: spentByCode.get((r.code ?? "").trim().toLowerCase()) ?? 0,
-      // Odoo flags a voucher used without saying where. If it was used and it
-      // never turns up in a Shopify order, it was spent in a shop. There is no
-      // redeeming invoice to read an applied amount from, so the face value is
-      // the best available figure — offline redemption takes the whole voucher.
-      spentOffline:
-        Boolean(r.used) && !spentByCode.has((r.code ?? "").trim().toLowerCase())
-          ? Number(r.discount_amount || 0)
-          : 0,
+      // Spent in a shop — taken from the redeeming invoice, not from the
+      // cashback report's `used` flag, which says nothing about when, where or
+      // on what, and is wrong besides: vouchers observed redeemed still read
+      // used = false.
+      spentOffline: offlineByCode.get((r.code ?? "").trim().toLowerCase())?.used ?? 0,
+      purchaseOffline: offlineByCode.get((r.code ?? "").trim().toLowerCase())?.gross ?? 0,
     }));
 
     // Channels: physical branches (sorted) first, then Website (online).
@@ -248,9 +270,8 @@ export async function GET(req: NextRequest) {
      * online order — roughly a quarter of redemptions, and invisible while Used
      * was website-only.
      *
-     * Purchases stays website-only: for an online redemption we have the order
-     * it paid for, but Odoo gives no redeeming invoice for a shop one, so the
-     * basket behind an offline redemption is unknown rather than zero.
+     * Purchases has both sides too: the Shopify order for an online redemption,
+     * and for a shop one the invoice the discount line sits on.
      *
      * Branch columns exist only for branches that also have sales rows, so
      * Total covers all 20-odd and can exceed the columns beside it.
@@ -276,10 +297,12 @@ export async function GET(req: NextRequest) {
         if (c.spentOnline > 0) earnedSpentOnline += c.earned;
         total.earned += c.earned;
         total.spent += c.spentOnline + c.spentOffline;
+        total.purchases += c.purchaseOffline;
         const col = rawToColumn.get(c.branch);
         if (col && out[col]) {
           out[col].earned += c.earned;
           out[col].spent += c.spentOffline;
+          out[col].purchases += c.purchaseOffline;
         }
       }
 
@@ -309,7 +332,7 @@ export async function GET(req: NextRequest) {
         for (const [col, v] of Object.entries(out)) {
           // Earned is a shop fact, Used and Purchases are website facts; the
           // other side of each gets a dash rather than a misleading zero.
-          const na = col !== "Total" && k === "purchases" && col !== WEBSITE;
+          const na = false; // every row now has both sides
           b[col] = { orders: 0, value: v[k], na };
         }
         return b;
