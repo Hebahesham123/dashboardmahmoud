@@ -305,40 +305,62 @@ export default function OrdersPage() {
       {!data || rows.length === 0 ? (
         <EmptyState loading={loading} label="No orders for this selection." />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[1100px] border-collapse text-left text-xs sm:text-sm">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {/* table-fixed with declared widths, so the row fits the screen and
+              the long Arabic addresses truncate instead of pushing it wide. */}
+          <table className="w-full table-fixed border-collapse text-left text-[11px] leading-tight">
+            <colgroup>
+              <col className="w-[8%]" />
+              <col className="w-[9%]" />
+              <col className="w-[20%]" />
+              <col className="w-[27%]" />
+              <col className="w-[10%]" />
+              <col className="w-[5%]" />
+              <col className="w-[13%]" />
+              <col className="w-[8%]" />
+            </colgroup>
             <thead>
               <tr className="bg-gray-50 text-gray-600">
-                {["Order", "Date", "Customer", "Address", "Payment", "Fulfilment", "Items", "Discount", "Total", "Codes"].map(
-                  (h) => (
-                    <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-2 font-semibold">
-                      {h}
-                    </th>
-                  )
-                )}
+                {["Order", "Date", "Customer", "Address", "Status", "Qty", "Total", "Codes"].map((h) => (
+                  <th key={h} className="truncate border-b border-gray-200 px-2 py-1.5 font-semibold">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((o) => (
-                <tr key={o.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900">{o.order_number ?? o.id}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-500">
-                    {o.order_date} <span className="text-gray-400">{o.created_at.slice(11, 16)}</span>
+                <tr key={o.id} className="border-b border-gray-100 align-top last:border-0 hover:bg-gray-50">
+                  <td className="truncate px-2 py-1.5 font-medium text-gray-900" title={o.order_number ?? String(o.id)}>
+                    {o.order_number ?? o.id}
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="text-gray-800">{o.customer_name ?? "—"}</div>
-                    {o.phone && <div className="text-[11px] text-gray-500">{o.phone}</div>}
-                    {o.customer_email && <div className="text-[11px] text-gray-400">{o.customer_email}</div>}
+                  <td className="px-2 py-1.5 text-gray-500">
+                    <div>{o.order_date.slice(5)}</div>
+                    <div className="text-gray-400">{o.created_at.slice(11, 16)}</div>
                   </td>
-                  <td className="max-w-[240px] px-3 py-2 align-top">
-                    <div className="truncate text-gray-800" title={[o.address1, o.address2].filter(Boolean).join(" ")}>
+                  <td className="px-2 py-1.5">
+                    <div className="truncate text-gray-800" title={o.customer_name ?? ""}>
+                      {o.customer_name ?? "—"}
+                    </div>
+                    {o.phone && <div className="truncate text-gray-500">{o.phone}</div>}
+                    {o.customer_email && (
+                      <div className="truncate text-gray-400" title={o.customer_email}>
+                        {o.customer_email}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div
+                      className="truncate text-gray-800"
+                      title={[o.address1, o.address2, o.city, o.province].filter(Boolean).join(" · ")}
+                    >
                       {o.address1 ?? "—"}
                     </div>
-                    <div className="text-[11px] text-gray-400">
+                    <div className="truncate text-gray-400">
                       {[o.city, o.province].filter(Boolean).join(", ") || (o.country ?? "")}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2">
+                  <td className="px-2 py-1.5">
                     <Badge
                       color={
                         o.financial_status === "paid"
@@ -350,21 +372,25 @@ export default function OrdersPage() {
                     >
                       {o.financial_status ?? "—"}
                     </Badge>
+                    <div className="mt-0.5">
+                      <Badge color={o.fulfillment_status === "fulfilled" ? "emerald" : "gray"}>
+                        {o.fulfillment_status ?? "unfulfilled"}
+                      </Badge>
+                    </div>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2">
-                    <Badge color={o.fulfillment_status === "fulfilled" ? "emerald" : "gray"}>
-                      {o.fulfillment_status ?? "unfulfilled"}
-                    </Badge>
+                  <td className="px-2 py-1.5 tabular-nums text-gray-700">{fmtNum(o.items)}</td>
+                  <td className="px-2 py-1.5 tabular-nums">
+                    <div className="truncate font-semibold text-gray-900">
+                      {fmtMoney(o.total_price, o.currency ?? currency)}
+                    </div>
+                    {o.total_discounts > 0 && (
+                      <div className="truncate text-gray-400">
+                        −{fmtMoney(o.total_discounts, o.currency ?? currency)}
+                      </div>
+                    )}
                   </td>
-                  <td className="px-3 py-2 tabular-nums text-gray-700">{fmtNum(o.items)}</td>
-                  <td className="px-3 py-2 tabular-nums text-gray-500">
-                    {o.total_discounts ? fmtMoney(o.total_discounts, o.currency ?? currency) : "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 tabular-nums font-semibold text-gray-900">
-                    {fmtMoney(o.total_price, o.currency ?? currency)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
+                  <td className="px-2 py-1.5">
+                    <div className="flex flex-wrap gap-0.5">
                       {o.cashback && <Badge color="indigo">cashback</Badge>}
                       {o.cancelled && <Badge color="rose">cancelled</Badge>}
                       {o.discount_codes
