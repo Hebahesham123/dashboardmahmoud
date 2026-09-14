@@ -19,6 +19,13 @@ interface OrderRow {
   net_sales: number;
   currency: string | null;
   cancelled: boolean;
+  phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  province: string | null;
+  country: string | null;
+  zip: string | null;
   discount_codes: string[];
   cashback: boolean;
 }
@@ -50,6 +57,12 @@ const COLUMNS: { label: string; get: (o: OrderRow) => string | number }[] = [
   { label: "Time", get: (o) => o.created_at.slice(11, 16) },
   { label: "Customer", get: (o) => o.customer_name ?? "" },
   { label: "Email", get: (o) => o.customer_email ?? "" },
+  { label: "Phone", get: (o) => o.phone ?? "" },
+  { label: "Address", get: (o) => [o.address1, o.address2].filter(Boolean).join(" ") },
+  { label: "City", get: (o) => o.city ?? "" },
+  { label: "Province", get: (o) => o.province ?? "" },
+  { label: "Country", get: (o) => o.country ?? "" },
+  { label: "Zip", get: (o) => o.zip ?? "" },
   { label: "Payment", get: (o) => o.financial_status ?? "" },
   { label: "Fulfilment", get: (o) => o.fulfillment_status ?? "unfulfilled" },
   { label: "Items", get: (o) => o.items },
@@ -111,7 +124,7 @@ export default function OrdersPage() {
     return (data?.orders ?? []).filter((o) => {
       if (onlyCashback && !o.cashback) return false;
       if (!q) return true;
-      return [o.order_number, o.customer_name, o.customer_email, ...o.discount_codes]
+      return [o.order_number, o.customer_name, o.customer_email, o.phone, o.address1, o.city, o.province, ...o.discount_codes]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q));
     });
@@ -163,7 +176,7 @@ export default function OrdersPage() {
     <div>
       <PageHeader
         title="Orders"
-        description="Every Shopify order for a day or a range — search it, filter it, export it."
+        description="Every Shopify order for a day or a range — with the delivery address. Search it, filter it, export it."
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
@@ -293,10 +306,10 @@ export default function OrdersPage() {
         <EmptyState loading={loading} label="No orders for this selection." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[900px] border-collapse text-left text-xs sm:text-sm">
+          <table className="w-full min-w-[1100px] border-collapse text-left text-xs sm:text-sm">
             <thead>
               <tr className="bg-gray-50 text-gray-600">
-                {["Order", "Date", "Customer", "Payment", "Fulfilment", "Items", "Discount", "Total", "Codes"].map(
+                {["Order", "Date", "Customer", "Address", "Payment", "Fulfilment", "Items", "Discount", "Total", "Codes"].map(
                   (h) => (
                     <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-2 font-semibold">
                       {h}
@@ -314,7 +327,16 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-3 py-2">
                     <div className="text-gray-800">{o.customer_name ?? "—"}</div>
+                    {o.phone && <div className="text-[11px] text-gray-500">{o.phone}</div>}
                     {o.customer_email && <div className="text-[11px] text-gray-400">{o.customer_email}</div>}
+                  </td>
+                  <td className="max-w-[240px] px-3 py-2 align-top">
+                    <div className="truncate text-gray-800" title={[o.address1, o.address2].filter(Boolean).join(" ")}>
+                      {o.address1 ?? "—"}
+                    </div>
+                    <div className="text-[11px] text-gray-400">
+                      {[o.city, o.province].filter(Boolean).join(", ") || (o.country ?? "")}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2">
                     <Badge

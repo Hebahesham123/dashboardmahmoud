@@ -31,6 +31,13 @@ export interface OrderRow {
   net_sales: number;
   currency: string | null;
   cancelled: boolean;
+  phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  province: string | null;
+  country: string | null;
+  zip: string | null;
   discount_codes: string[];
   cashback: boolean; // paid, wholly or partly, with a cashback voucher
 }
@@ -52,7 +59,7 @@ export async function GET(req: NextRequest) {
       const { data: page, error } = await sb
         .from("orders")
         .select(
-          "id,order_number,order_date,created_at,customer_name,customer_email,financial_status,fulfillment_status,total_items,total_price,total_discounts,net_sales,currency,cancelled_at,codes:raw->discount_codes"
+          "id,order_number,order_date,created_at,customer_name,customer_email,financial_status,fulfillment_status,total_items,total_price,total_discounts,net_sales,currency,cancelled_at,codes:raw->discount_codes,ship:raw->shipping_address,bill:raw->billing_address,rawphone:raw->phone"
         )
         .gte("order_date", from)
         .lte("order_date", to)
@@ -64,10 +71,22 @@ export async function GET(req: NextRequest) {
       if (rows.length < PAGE) break;
     }
 
+    type Addr = {
+      phone?: string | null;
+      address1?: string | null;
+      address2?: string | null;
+      city?: string | null;
+      province?: string | null;
+      country?: string | null;
+      zip?: string | null;
+    };
     const rows: OrderRow[] = data.map((o) => {
       const codes = ((o.codes as { code?: string }[] | null) ?? [])
         .map((d) => (d?.code ?? "").trim())
         .filter(Boolean);
+      // Where it ships to. A handful of orders carry only a billing address
+      // (digital or in-store), so that is the fallback.
+      const a = ((o.ship as Addr | null) ?? (o.bill as Addr | null) ?? {}) as Addr;
       return {
         id: Number(o.id),
         order_number: (o.order_number as string) ?? null,
@@ -83,6 +102,13 @@ export async function GET(req: NextRequest) {
         net_sales: Number(o.net_sales || 0),
         currency: (o.currency as string) ?? null,
         cancelled: Boolean(o.cancelled_at),
+        phone: a.phone ?? (o.rawphone as string) ?? null,
+        address1: a.address1 ?? null,
+        address2: a.address2 ?? null,
+        city: a.city ?? null,
+        province: a.province ?? null,
+        country: a.country ?? null,
+        zip: a.zip ?? null,
         discount_codes: codes,
         cashback: codes.some((c) => CASHBACK_RE.test(c)),
       };
