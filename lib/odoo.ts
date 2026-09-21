@@ -367,3 +367,93 @@ export function extractCashbackRedemptions(rows: OdooInvoiceLine[]): CashbackRed
   }
   return out.filter((r) => r.day);
 }
+
+/**
+ * Odoo files retail stock as "NS Home / <category>/<subcategory>", e.g.
+ * "NS Home / Bathroom Textile/Towels". Everything else in the feed is the
+ * fabric/commercial side of the business, which the Insights page is not
+ * about, so only the NS Home branch of the tree is kept.
+ */
+const NS_PREFIX = /^\s*NS Home\s*\/\s*/i;
+
+/** Which room a category belongs to. Categories not listed fall to "Other". */
+const ROOM_OF: Record<string, string> = {
+  "Bathroom Textile": "Bathroom",
+  "Bed Linen": "Bedroom",
+  "Duvets & Pillows": "Bedroom",
+  "Bed Protection": "Bedroom",
+  Cushions: "Living Room",
+  "Throws & Blankets": "Living Room",
+};
+
+export interface ProductCategory {
+  room: string;
+  category: string;
+  subcategory: string;
+}
+
+/** Split "NS Home / Bathroom Textile/Towels" into its parts, or null if the
+ *  line is not NS Home retail (or is the bare "NS Home" discount bucket). */
+export function parseCategory(raw: string | null | undefined): ProductCategory | null {
+  const s = (raw ?? "").trim();
+  if (!NS_PREFIX.test(s)) return null;
+  const rest = s.replace(NS_PREFIX, "").trim();
+  if (!rest) return null; // bare "NS Home" — where the discount products sit
+  const [category, ...tail] = rest.split("/").map((x) => x.trim());
+  if (!category) return null;
+  return {
+    room: ROOM_OF[category] ?? "Other",
+    category,
+    subcategory: tail.join(" / ") || category,
+  };
+}
+
+export interface ProductSalesRow {
+  day: string;
+  branch: string;
+  product_id: number;
+  product_name: string | null;
+  room: string;
+  category: string;
+  subcategory: string;
+  qty: number;
+  value: number;
+}
+
+/**
+ * Roll invoice lines into one row per day / branch / product. Refund invoices
+ * flip the sign on both qty and value, so a returned towel cancels the sale
+ * rather than counting as a second one.
+ */
+export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[] {
+  const map = new Map<string, ProductSalesRow>();
+  for (const r of rows) {
+    const cat = parseCategory(r.product_category);
+    if (!cat) continue;
+    const day = (r.invoice_date ?? "").slice(0, 10);
+    const branch = (r.branch ?? "").trim();
+    const productId = Number(r.product_id || 0);
+    if (!day || !branch || !productId) continue;
+
+    const sign = isRefund(r.invoice_number) ? -1 : 1;
+    const key = `${day}|${branch}|${productId}`;
+    const e = map.get(key);
+    if (e) {
+      e.qty += Number(r.qty || 0) * sign;
+      e.value += Number(r.price_total || 0) * sign;
+    } else {
+      map.set(key, {
+        day,
+        branch,
+        product_id: productId,
+        product_name: r.product_name ?? null,
+        room: cat.room,
+        category: cat.category,
+        subcategory: cat.subcategory,
+        qty: Number(r.qty || 0) * sign,
+        value: Number(r.price_total || 0) * sign,
+      });
+    }
+  }
+  return [...map.values()];
+}

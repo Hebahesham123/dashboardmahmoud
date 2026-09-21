@@ -23,6 +23,7 @@ const NAV: NavItem[] = [
   { href: "/daily", label: "Daily Report", icon: "📅" },
   { href: "/offline", label: "Offline (Odoo)", icon: "🏬" },
   { href: "/products", label: "Products", icon: "🛍️" },
+  { href: "/insights", label: "Insights", icon: "🔎" },
   { href: "/abandoned", label: "Abandoned Carts", icon: "🛒" },
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
