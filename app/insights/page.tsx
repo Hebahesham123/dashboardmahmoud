@@ -34,8 +34,6 @@ interface Product {
   value: number;
   subcategory: string;
   lastSold: string;
-  returnedUnits: number;
-  returnedValue: number;
 }
 interface Resp {
   ok: boolean;
@@ -48,12 +46,8 @@ interface Resp {
     shipping: number;
     totalSales: number;
     products: number;
-    returnedUnits: number;
-    returnedValue: number;
-    soldUnits: number;
   };
   channels: Slice[];
-  returnsByChannel: Slice[];
   branches: Slice[];
   rooms: Slice[];
   categories: Slice[];
@@ -63,7 +57,6 @@ interface Resp {
   trend: Trend;
   topProducts: Product[];
   slowProducts: Product[];
-  returnedProducts: Product[];
   options: { rooms: string[]; categories: string[]; subcategories: string[] };
 }
 
@@ -162,8 +155,6 @@ export default function InsightsPage() {
   const activeFilters = [channel && (channel === "online" ? "Online" : "Branches"), room, subcategory]
     .filter(Boolean)
     .join(" · ");
-  const returnRate =
-    data && data.totals.soldUnits > 0 ? data.totals.returnedUnits / data.totals.soldUnits : 0;
   const prevLabel = data?.trend.previous
     ? `vs ${data.trend.previous.from.slice(5)} → ${data.trend.previous.to.slice(5)}`
     : undefined;
@@ -191,22 +182,16 @@ export default function InsightsPage() {
         tone: d >= 0 ? "up" : "down",
       });
     }
-    if (data.totals.returnedUnits > 0) {
-      out.push({
-        text: `${(returnRate * 100).toFixed(1)}% of pieces came back`,
-        tone: returnRate > 0.05 ? "down" : "flat",
-      });
-    }
     const bandTop = [...data.bands].sort((a, b) => b.units - a.units)[0];
     if (bandTop && bandTop.units > 0) out.push({ text: `Most pieces sell at ${bandTop.label}`, tone: "flat" });
     return out;
-  }, [data, returnRate]);
+  }, [data]);
 
   return (
     <div>
       <PageHeader
         title="Insights"
-        description="What sells, what doesn't, and what comes back — online and across every branch."
+        description="What sells and what doesn't — online and across every branch."
       />
 
       {/* Filters, in one row above the charts. */}
@@ -322,7 +307,7 @@ export default function InsightsPage() {
         />
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Stat
               label="Total sales"
               value={fmtMoney(data.totals.totalSales, currency)}
@@ -334,14 +319,9 @@ export default function InsightsPage() {
             <Stat
               label="Units sold"
               value={fmtNum(Math.round(data.totals.units))}
-              hint="net of returns"
+              hint="pieces"
               delta={delta(data.trend.current.units, data.trend.previous?.units)}
               deltaHint={prevLabel}
-            />
-            <Stat
-              label="Returns"
-              value={fmtMoney(data.totals.returnedValue, currency)}
-              hint={`${fmtNum(Math.round(data.totals.returnedUnits))} pieces · ${(returnRate * 100).toFixed(1)}% of units sold`}
             />
             <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
           </div>
@@ -359,7 +339,7 @@ export default function InsightsPage() {
               <Donut rows={data.rooms} currency={currency} />
             </Panel>
             <div className="lg:col-span-2">
-              <Panel title="Sales by month" subtitle="net of returns">
+              <Panel title="Sales by month" subtitle="EGP">
                 <Columns points={data.timeseries} currency={currency} />
               </Panel>
             </div>
@@ -419,24 +399,11 @@ export default function InsightsPage() {
             </Panel>
           </div>
 
-          {data.totals.returnedUnits > 0 && (
-            <div className="grid gap-4 lg:grid-cols-3">
-              <Panel title="Returns by channel" subtitle="where the goods come back from">
-                <Bars rows={data.returnsByChannel} currency={currency} />
-              </Panel>
-              <div className="lg:col-span-2">
-                <Panel title="Most returned" subtitle="by value of goods coming back">
-                  <ProductTable rows={data.returnedProducts} currency={currency} trailing="returned" />
-                </Panel>
-              </div>
-            </div>
-          )}
-
           <p className="px-1 text-[11px] leading-relaxed text-gray-400">
             NS Home retail only, online and in the shops — the fabric and commercial catalogue is excluded. Total sales
             is product value after discounts and with shipping, so it matches the rest of the dashboard; every
             per-room, per-category and per-product figure is product value before discount, because Odoo books a
-            discount against no category. Units and revenue are net of returns, which are also reported on their own.
+            discount against no category. Units and revenue are net of anything returned.
             Price bands use the unit price (value ÷ units).
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
@@ -781,7 +748,7 @@ function ProductTable({
 }: {
   rows: Product[];
   currency: string;
-  trailing?: "last" | "returned";
+  trailing?: "last";
 }) {
   if (!rows.length) return <p className="py-6 text-center text-xs text-gray-400">Nothing in this selection.</p>;
   return (
@@ -802,9 +769,6 @@ function ProductTable({
           {trailing === "last" && (
             <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Last</th>
           )}
-          {trailing === "returned" && (
-            <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Back</th>
-          )}
         </tr>
       </thead>
       <tbody>
@@ -823,11 +787,6 @@ function ProductTable({
             </td>
             {trailing === "last" && (
               <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-400">{p.lastSold.slice(5)}</td>
-            )}
-            {trailing === "returned" && (
-              <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-600">
-                {fmtNum(Math.round(p.returnedUnits))}
-              </td>
             )}
           </tr>
         ))}
