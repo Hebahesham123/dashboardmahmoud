@@ -305,13 +305,23 @@ export async function fetchAnalyticsInvoices(
   let page = 1;
 
   for (let guard = 0; guard < 2000; guard++) {
-    const res = await fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "API-Key": key },
-      body: JSON.stringify({ page, limit: 500, date_from: dateFrom, date_to: dateTo }),
-      cache: "no-store",
-    });
-    if (!res.ok) throw new Error(`Odoo analytics ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    // A long backfill is hundreds of requests and Odoo.sh throws the odd 503
+    // under load; without a retry one blip kills an hour of work.
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "API-Key": key },
+        body: JSON.stringify({ page, limit: 500, date_from: dateFrom, date_to: dateTo }),
+        cache: "no-store",
+      });
+      if (res.ok) break;
+      if (res.status < 500 || attempt === 3) break;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
+    if (!res || !res.ok) {
+      throw new Error(`Odoo analytics ${res?.status ?? "no response"}: ${((await res?.text()) ?? "").slice(0, 200)}`);
+    }
     const j = await res.json();
     const payload = (j.result ?? j) as {
       status: string;
@@ -452,10 +462,12 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
     if (!day || !branch || !productId) continue;
 
     // Odoo sends a credit note's totals as positive; the "R" prefix on the
-    // invoice number is what marks it as a return.
+    // invoice number is what marks it as a return. Only a return gets its
+    // magnitude taken — a discount line is legitimately negative, and
+    // flattening that turns discounts into income.
     const refund = isRefund(r.invoice_number);
-    const qty = Math.abs(Number(r.qty || 0));
-    const value = Math.abs(Number(r.price_total || 0));
+    const rawQty = Number(r.qty || 0);
+    const rawValue = Number(r.price_total || 0);
     const key = `${day}|${branch}|${productId}`;
     const e = map.get(key) ?? {
       day,
@@ -472,11 +484,11 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
       kind: cat ? ("product" as const) : kindOf(r.product_name),
     };
     if (refund) {
-      e.returned_qty += qty;
-      e.returned_value += value;
+      e.returned_qty += Math.abs(rawQty);
+      e.returned_value += Math.abs(rawValue);
     } else {
-      e.qty += qty;
-      e.value += value;
+      e.qty += rawQty;
+      e.value += rawValue;
     }
     map.set(key, e);
   }
