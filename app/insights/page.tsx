@@ -239,19 +239,12 @@ export default function InsightsPage() {
       ) : (
         <div className="space-y-5">
           {/* Headline */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Stat
               label="Total sales"
               value={fmtMoney(data.totals.totalSales, currency)}
               hint={periodLabel}
               strong
-            />
-            <Stat
-              label="Product value"
-              value={fmtMoney(data.totals.gross, currency)}
-              hint={`before ${fmtMoney(Math.abs(data.totals.discounts), currency)} of discount${
-                data.totals.shipping ? ` · ${fmtMoney(data.totals.shipping, currency)} shipping` : ""
-              }`}
             />
             <Stat label="Units sold" value={fmtNum(Math.round(data.totals.units))} hint="pieces" />
             <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
