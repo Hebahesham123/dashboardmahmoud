@@ -281,7 +281,7 @@ export default function AbandonedPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Link href="/" className="text-sm text-indigo-600 hover:underline">← Back to Overview</Link>
+        <Link href="/overview" className="text-sm text-indigo-600 hover:underline">← Back to Overview</Link>
 
         {/* scope toggle — matches the Overview when set to the month */}
         <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 text-sm">

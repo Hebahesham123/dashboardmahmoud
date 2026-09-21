@@ -17,13 +17,13 @@ const INQUIRIES_ITEM: NavItem[] = INQUIRIES_URL
 
 // Full nav for the normal (admin) dashboard.
 const NAV: NavItem[] = [
-  { href: "/", label: "Overview", icon: "📊" },
+  { href: "/insights", label: "Insights", icon: "🔎" },
+  { href: "/overview", label: "Overview", icon: "📊" },
   { href: "/summary", label: "Summary", icon: "📋" },
   { href: "/orders", label: "Orders", icon: "🧾" },
   { href: "/daily", label: "Daily Report", icon: "📅" },
   { href: "/offline", label: "Offline (Odoo)", icon: "🏬" },
   { href: "/products", label: "Products", icon: "🛍️" },
-  { href: "/insights", label: "Insights", icon: "🔎" },
   { href: "/abandoned", label: "Abandoned Carts", icon: "🛒" },
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
