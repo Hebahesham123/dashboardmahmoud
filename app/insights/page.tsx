@@ -53,6 +53,7 @@ interface Resp {
     soldUnits: number;
   };
   channels: Slice[];
+  returnsByChannel: Slice[];
   branches: Slice[];
   rooms: Slice[];
   categories: Slice[];
@@ -418,10 +419,17 @@ export default function InsightsPage() {
             </Panel>
           </div>
 
-          {data.returnedProducts.length > 0 && (
-            <Panel title="Most returned" subtitle="by value of goods coming back">
-              <ProductTable rows={data.returnedProducts} currency={currency} trailing="returned" />
-            </Panel>
+          {data.totals.returnedUnits > 0 && (
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Panel title="Returns by channel" subtitle="where the goods come back from">
+                <Bars rows={data.returnsByChannel} currency={currency} />
+              </Panel>
+              <div className="lg:col-span-2">
+                <Panel title="Most returned" subtitle="by value of goods coming back">
+                  <ProductTable rows={data.returnedProducts} currency={currency} trailing="returned" />
+                </Panel>
+              </div>
+            </div>
           )}
 
           <p className="px-1 text-[11px] leading-relaxed text-gray-400">
@@ -480,7 +488,11 @@ function Stat({
   deltaHint?: string;
 }) {
   return (
-    <div className={`rounded-xl border bg-white p-4 ${strong ? "border-[#d8c3aa] bg-[#fdfbf8]" : "border-[#e7e2dc]"}`}>
+    <div
+      className={`rounded-xl border p-4 shadow-[0_1px_2px_rgba(16,12,8,0.04)] ${
+        strong ? "border-[#d8c3aa] bg-gradient-to-b from-[#fdfaf6] to-white" : "border-[#e7e2dc] bg-white"
+      }`}
+    >
       <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{label}</div>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="text-xl font-bold tabular-nums text-gray-900 sm:text-2xl">{value}</span>
@@ -558,6 +570,12 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
   return (
     <div className="flex items-center gap-4">
       <svg viewBox="0 0 130 130" className="h-[130px] w-[130px] shrink-0" role="img" aria-label="Share by room">
+        <text x="65" y="63" textAnchor="middle" className="fill-gray-900 text-[12px] font-bold">
+          {fmtNum(Math.round(total))}
+        </text>
+        <text x="65" y="76" textAnchor="middle" className="fill-gray-400 text-[8px]">
+          EGP
+        </text>
         <g transform="translate(65,65) rotate(-90)">
           {arcs.map(({ r, len, offset }) => (
             <circle
@@ -599,36 +617,61 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
 function Columns({ points, currency }: { points: Point[]; currency: string }) {
   if (!points.length) return <p className="py-6 text-center text-xs text-gray-400">No months in this selection.</p>;
   const max = Math.max(1, ...points.map((p) => Math.abs(p.value)));
-  const last = points[points.length - 1];
+  const peak = points.reduce((a, b) => (Math.abs(b.value) > Math.abs(a.value) ? b : a));
+  // Heights in pixels, not percentages: the column wrapper is sized by its
+  // content, and a percentage height against an auto-height parent resolves to
+  // nothing — which is how this chart first rendered, all labels and no bars.
+  const PLOT = 124;
   return (
     <div>
-      <div className="flex h-[130px] items-end gap-1.5">
+      <div className="relative">
+        <span className="absolute -top-2 left-0 z-10 bg-white pr-1 text-[9px] tabular-nums text-gray-300">
+          {fmtMoney(max, currency)}
+        </span>
+        {/* One recessive reference line at the top of the scale, so a column
+            can be read against something rather than floating. */}
+        <div className="absolute inset-x-0 top-0 border-t border-[#f2eee9]" />
+        <div className="flex items-end gap-2 border-b border-[#e7e2dc]" style={{ height: PLOT }}>
+          {points.map((p) => (
+            <div key={p.label} className="group flex min-w-0 flex-1 justify-center">
+              <div
+                className="w-full max-w-[38px] rounded-t-[4px] transition-opacity group-hover:opacity-70"
+                style={{
+                  height: Math.max(2, (Math.abs(p.value) / max) * (PLOT - 6)),
+                  backgroundColor: INK,
+                  opacity: p.label === peak.label ? 1 : 0.75,
+                }}
+                title={`${p.label} — ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-2">
         {points.map((p) => (
-          <div key={p.label} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
-            <div
-              className="w-full max-w-[24px] rounded-t-[4px] transition-opacity group-hover:opacity-75"
-              style={{ height: `${Math.max(2, (Math.abs(p.value) / max) * 100)}%`, backgroundColor: INK }}
-              title={`${p.label} \u2014 ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
-            />
-            <span className="w-full truncate text-center text-[9px] tabular-nums text-gray-400">
-              {p.label.slice(2)}
-            </span>
-          </div>
+          <span
+            key={p.label}
+            className="min-w-0 flex-1 truncate pt-1.5 text-center text-[10px] tabular-nums text-gray-400"
+          >
+            {p.label.slice(2)}
+          </span>
         ))}
       </div>
       <p className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px] text-gray-400">
-        Latest {last.label} &middot; <b className="text-gray-700">{fmtMoney(last.value, currency)}</b>
+        Best month {peak.label} &middot; <b className="text-gray-700">{fmtMoney(peak.value, currency)}</b>
       </p>
     </div>
   );
 }
 
+
+
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-[#e7e2dc] bg-white p-4">
-      <header className="mb-3">
-        <h2 className="text-[13px] font-bold text-gray-900">{title}</h2>
-        {subtitle && <p className="text-[11px] text-gray-400">{subtitle}</p>}
+    <section className="rounded-xl border border-[#e7e2dc] bg-white p-4 shadow-[0_1px_2px_rgba(16,12,8,0.04)]">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-bold tracking-tight text-gray-900">{title}</h2>
+        {subtitle && <p className="shrink-0 truncate text-[11px] text-gray-400">{subtitle}</p>}
       </header>
       {children}
     </section>

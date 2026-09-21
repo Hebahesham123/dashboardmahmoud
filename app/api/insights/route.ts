@@ -290,6 +290,32 @@ export async function GET(req: NextRequest) {
         .filter((p) => p.returnedUnits > 0)
         .sort((a, b) => b.returnedValue - a.returnedValue)
         .slice(0, 10),
+      // Returns, split the same way as sales, so you can see which side of the
+      // business the goods come back from.
+      returnsByChannel: [
+        {
+          label: "Online",
+          ...(() => {
+            const l = inBand.filter((r) => isOnline(r.branch));
+            return {
+              units: l.reduce((a, r) => a + r.returnedQty, 0),
+              value: l.reduce((a, r) => a + r.returnedValue, 0),
+              orders: l.filter((r) => r.returnedQty > 0).length,
+            };
+          })(),
+        },
+        {
+          label: "Branches",
+          ...(() => {
+            const l = inBand.filter((r) => !isOnline(r.branch));
+            return {
+              units: l.reduce((a, r) => a + r.returnedQty, 0),
+              value: l.reduce((a, r) => a + r.returnedValue, 0),
+              orders: l.filter((r) => r.returnedQty > 0).length,
+            };
+          })(),
+        },
+      ],
       // Gross only on these two: a discount line names no branch category.
       channels: [
         { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))) },
