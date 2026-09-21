@@ -32,6 +32,8 @@ interface Row {
   subcategory: string | null;
   qty: number;
   value: number;
+  returned_qty: number;
+  returned_value: number;
   kind: string; // product | discount | shipping
 }
 
@@ -80,12 +82,18 @@ export async function GET(req: NextRequest) {
         };
       });
 
-    const COLS = "day,branch,product_id,product_name,room,category,subcategory,qty,value";
+    const COLS =
+      "day,branch,product_id,product_name,room,category,subcategory,qty,value,returned_qty,returned_value";
     // `kind` arrives with migration_v14. Before it is run the column is not
     // there and selecting it returns nothing, so fall back to the old shape
     // rather than showing an empty page.
     let allRows = await read(`${COLS},kind`);
-    if (allRows.length === 0) allRows = await read(COLS);
+    // The column list grows with each migration; fall back through the older
+    // shapes so the page keeps working between a deploy and its migration.
+    if (allRows.length === 0)
+      allRows = await read("day,branch,product_id,product_name,room,category,subcategory,qty,value,kind");
+    if (allRows.length === 0)
+      allRows = await read("day,branch,product_id,product_name,room,category,subcategory,qty,value");
 
     // Channel is filtered here rather than in the query: room and category are
     // exact matches the database can do, but branch is a pattern.
@@ -106,10 +114,22 @@ export async function GET(req: NextRequest) {
     // Unit price decides the band. Rows that net to zero units (a sale and its
     // refund landing on the same day) have no meaningful price, so they are
     // left out of the banding but still count in the totals.
-    const priced = productRows.map((r) => ({
-      ...r,
-      unit: r.qty !== 0 ? r.value / r.qty : 0,
-    }));
+    const priced = productRows.map((r) => {
+      const returnedQty = Number(r.returned_qty || 0);
+      const returnedValue = Number(r.returned_value || 0);
+      // Rank on what was actually kept, but keep the returns visible.
+      const netQty = Number(r.qty || 0) - returnedQty;
+      const netValue = Number(r.value || 0) - returnedValue;
+      return {
+        ...r,
+        qty: netQty,
+        value: netValue,
+        soldQty: Number(r.qty || 0),
+        returnedQty,
+        returnedValue,
+        unit: Number(r.qty || 0) !== 0 ? Number(r.value || 0) / Number(r.qty || 0) : 0,
+      };
+    });
     const inBand = priced.filter(
       (r) =>
         (minPrice === null || r.unit >= minPrice) && (maxPrice === null || r.unit <= maxPrice)
@@ -130,22 +150,47 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => b.value - a.value);
     };
 
-    // Top products: same product across days and branches is one product.
-    const byProduct = new Map<number, { name: string; units: number; value: number; subcategory: string }>();
+    // One product is one product, however many days and branches it sold across.
+    const byProduct = new Map<
+      number,
+      {
+        name: string;
+        units: number;
+        value: number;
+        subcategory: string;
+        lastSold: string;
+        returnedUnits: number;
+        returnedValue: number;
+      }
+    >();
     for (const r of inBand) {
       const e = byProduct.get(r.product_id) ?? {
         name: r.product_name ?? String(r.product_id),
         units: 0,
         value: 0,
         subcategory: r.subcategory ?? "",
+        lastSold: r.day,
+        returnedUnits: 0,
+        returnedValue: 0,
       };
       e.units += r.qty;
       e.value += r.value;
+      e.returnedUnits += r.returnedQty;
+      e.returnedValue += r.returnedValue;
+      if (r.qty > 0 && r.day > e.lastSold) e.lastSold = r.day;
       byProduct.set(r.product_id, e);
     }
-    const topProducts = [...byProduct.entries()]
-      .map(([product_id, v]) => ({ product_id, ...v }))
-      .sort((a, b) => b.value - a.value)
+    const products = [...byProduct.entries()].map(([product_id, v]) => ({ product_id, ...v }));
+    const topProducts = [...products].sort((a, b) => b.value - a.value).slice(0, 10);
+
+    // Slow movers: fewest units shifted, among things that did sell. Products
+    // with no net movement (a sale cancelled by its refund) are a different
+    // problem and would crowd out the genuinely slow ones. `lastSold` is the
+    // column that makes the list actionable — a low count from last week is
+    // not the same as a low count from March.
+    const slowProducts = products
+      .filter((p) => p.units > 0)
+      .sort((a, b) => a.units - b.units || a.value - b.value)
       .slice(0, 10);
 
     const bands = PRICE_BANDS.map((b) => {
@@ -181,7 +226,16 @@ export async function GET(req: NextRequest) {
         shipping: shippingValue,
         totalSales: inBand.reduce((acc, r) => acc + r.value, 0) + discountValue + shippingValue,
         products: byProduct.size,
+        returnedUnits: inBand.reduce((acc, r) => acc + r.returnedQty, 0),
+        returnedValue: inBand.reduce((acc, r) => acc + r.returnedValue, 0),
+        soldUnits: inBand.reduce((acc, r) => acc + r.soldQty, 0),
       },
+      // Most-returned first — the list worth acting on.
+      returnedProducts: [...byProduct.entries()]
+        .map(([product_id, v]) => ({ product_id, ...v }))
+        .filter((p) => p.returnedUnits > 0)
+        .sort((a, b) => b.returnedValue - a.returnedValue)
+        .slice(0, 10),
       // Gross only on these two: a discount line names no branch category.
       channels: [
         { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))) },
@@ -195,6 +249,7 @@ export async function GET(req: NextRequest) {
       subcategories: sum(inBand, (r) => (r.subcategory ?? "—") as string),
       bands,
       topProducts,
+      slowProducts,
       // Everything the page needs to build its dropdowns, taken before the
       // room/category filters so choosing one does not empty the others.
       options: {

@@ -416,8 +416,10 @@ export interface ProductSalesRow {
   room: string | null;
   category: string | null;
   subcategory: string | null;
-  qty: number;
-  value: number;
+  qty: number;           // sold
+  value: number;         // sold
+  returned_qty: number;  // came back, as a positive number
+  returned_value: number;
   kind: "product" | "discount" | "shipping";
 }
 
@@ -433,9 +435,10 @@ function kindOf(productName: string | null | undefined): "discount" | "shipping"
 }
 
 /**
- * Roll invoice lines into one row per day / branch / product. Refund invoices
- * flip the sign on both qty and value, so a returned towel cancels the sale
- * rather than counting as a second one.
+ * Roll invoice lines into one row per day / branch / product, keeping sales
+ * and returns apart. Folding a refund back into the sale as a negative hides
+ * the return completely — net units look fine while nobody can see how much
+ * came back. Net is still available as qty - returned_qty.
  */
 export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[] {
   const map = new Map<string, ProductSalesRow>();
@@ -448,26 +451,34 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
     const productId = Number(r.product_id || 0);
     if (!day || !branch || !productId) continue;
 
-    const sign = isRefund(r.invoice_number) ? -1 : 1;
+    // Odoo sends a credit note's totals as positive; the "R" prefix on the
+    // invoice number is what marks it as a return.
+    const refund = isRefund(r.invoice_number);
+    const qty = Math.abs(Number(r.qty || 0));
+    const value = Math.abs(Number(r.price_total || 0));
     const key = `${day}|${branch}|${productId}`;
-    const e = map.get(key);
-    if (e) {
-      e.qty += Number(r.qty || 0) * sign;
-      e.value += Number(r.price_total || 0) * sign;
+    const e = map.get(key) ?? {
+      day,
+      branch,
+      product_id: productId,
+      product_name: r.product_name ?? null,
+      room: cat?.room ?? null,
+      category: cat?.category ?? null,
+      subcategory: cat?.subcategory ?? null,
+      qty: 0,
+      value: 0,
+      returned_qty: 0,
+      returned_value: 0,
+      kind: cat ? ("product" as const) : kindOf(r.product_name),
+    };
+    if (refund) {
+      e.returned_qty += qty;
+      e.returned_value += value;
     } else {
-      map.set(key, {
-        day,
-        branch,
-        product_id: productId,
-        product_name: r.product_name ?? null,
-        room: cat?.room ?? null,
-        category: cat?.category ?? null,
-        subcategory: cat?.subcategory ?? null,
-        qty: Number(r.qty || 0) * sign,
-        value: Number(r.price_total || 0) * sign,
-        kind: cat ? "product" : kindOf(r.product_name),
-      });
+      e.qty += qty;
+      e.value += value;
     }
+    map.set(key, e);
   }
   return [...map.values()];
 }

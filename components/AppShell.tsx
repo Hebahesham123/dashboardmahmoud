@@ -37,6 +37,13 @@ const CC_NAV: NavItem[] = [
   { href: "/order", label: "Create Order", icon: "🧾" },
   ...INQUIRIES_ITEM,
 ];
+// Pages with their own date filtering, and the title to show in place of the
+// global range toolbar.
+const OWN_FILTER: Record<string, string> = {
+  "/summary": "Summary",
+  "/insights": "Insights",
+};
+
 // Routes a call-center user may open (anything else → /abandoned).
 const CC_ALLOWED = ["/abandoned", "/order"];
 
@@ -207,10 +214,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <span className="font-semibold text-gray-700">Call Center</span>
               {ccEmail && <span className="text-sm text-gray-400">· {ccEmail}</span>}
             </div>
-          ) : pathname === "/summary" ? (
-            // Summary has its own day/range filter — hide the global toolbar.
+          ) : OWN_FILTER[pathname] ? (
+            // These pages carry their own date controls — a second, unrelated
+            // range picker above them just invites the wrong reading.
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-gray-700">Summary</span>
+              <span className="font-semibold text-gray-700">{OWN_FILTER[pathname]}</span>
             </div>
           ) : (
             <>
