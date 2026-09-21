@@ -28,7 +28,16 @@ interface Resp {
   ok: boolean;
   error?: string;
   coverage: { first: string | null; last: string | null; rows: number };
-  totals: { units: number; value: number; products: number };
+  totals: {
+    units: number;
+    gross: number;      // product lines, before any discount
+    discounts: number;  // negative
+    shipping: number;
+    totalSales: number; // what was actually billed
+    products: number;
+  };
+  channels: Slice[];
+  branches: Slice[];
   rooms: Slice[];
   categories: Slice[];
   subcategories: Slice[];
@@ -49,6 +58,7 @@ export default function InsightsPage() {
   const [to, setTo] = useState(todayStr());
   const [room, setRoom] = useState("");
   const [subcategory, setSubcategory] = useState("");
+  const [channel, setChannel] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [data, setData] = useState<Resp | null>(null);
@@ -61,12 +71,13 @@ export default function InsightsPage() {
       p.set("from", from);
       p.set("to", to);
     }
+    if (channel) p.set("channel", channel);
     if (room) p.set("room", room);
     if (subcategory) p.set("subcategory", subcategory);
     if (minPrice) p.set("minPrice", minPrice);
     if (maxPrice) p.set("maxPrice", maxPrice);
     return p.toString();
-  }, [allTime, from, to, room, subcategory, minPrice, maxPrice]);
+  }, [allTime, from, to, channel, room, subcategory, minPrice, maxPrice]);
 
   useEffect(() => {
     let alive = true;
@@ -143,6 +154,16 @@ export default function InsightsPage() {
         )}
 
         <select
+          value={channel}
+          onChange={(e) => setChannel(e.target.value)}
+          className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+        >
+          <option value="">Online + branches</option>
+          <option value="online">Online only</option>
+          <option value="offline">Branches only</option>
+        </select>
+
+        <select
           value={room}
           onChange={(e) => {
             setRoom(e.target.value);
@@ -190,9 +211,10 @@ export default function InsightsPage() {
           />
         </div>
 
-        {(room || subcategory || minPrice || maxPrice) && (
+        {(channel || room || subcategory || minPrice || maxPrice) && (
           <button
             onClick={() => {
+              setChannel("");
               setRoom("");
               setSubcategory("");
               setMinPrice("");
@@ -217,11 +239,40 @@ export default function InsightsPage() {
       ) : (
         <div className="space-y-5">
           {/* Headline */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Stat label="Revenue" value={fmtMoney(data.totals.value, currency)} hint={periodLabel} />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat
+              label="Total sales"
+              value={fmtMoney(data.totals.totalSales, currency)}
+              hint={periodLabel}
+              strong
+            />
+            <Stat
+              label="Product value"
+              value={fmtMoney(data.totals.gross, currency)}
+              hint={`before ${fmtMoney(Math.abs(data.totals.discounts), currency)} of discount${
+                data.totals.shipping ? ` · ${fmtMoney(data.totals.shipping, currency)} shipping` : ""
+              }`}
+            />
             <Stat label="Units sold" value={fmtNum(Math.round(data.totals.units))} hint="pieces" />
             <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
           </div>
+
+          <Panel title="Online vs branches" subtitle="product value — where it sold">
+            <Bars
+              rows={data.channels}
+              currency={currency}
+              onPick={(l) => {
+                const next = l === "Online" ? "online" : "offline";
+                setChannel(channel === next ? "" : next);
+              }}
+              active={channel === "online" ? "Online" : channel === "offline" ? "Branches" : ""}
+            />
+            {data.branches.length > 1 && (
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                <Bars rows={data.branches} currency={currency} />
+              </div>
+            )}
+          </Panel>
 
           <div className="grid gap-5 lg:grid-cols-2">
             <Panel title="By room" subtitle="Bedroom · Living Room · Bathroom">
@@ -282,8 +333,11 @@ export default function InsightsPage() {
           </Panel>
 
           <p className="text-[11px] text-gray-400">
-            NS Home retail lines only — the fabric and commercial side of the catalogue is excluded. Refunds subtract, so
-            a returned piece cancels its sale. Price bands use the unit price (value ÷ units).
+            NS Home retail only, online and in the shops — the fabric and commercial side of the catalogue is excluded.
+            Total sales is the product value after discounts and with shipping, so it is comparable with the rest of the
+            dashboard; every per-room, per-category and per-product figure below is product value before discount,
+            because Odoo books a discount against no category. Refunds subtract, so a returned piece cancels its sale.
+            Price bands use the unit price (value ÷ units).
             {loading && <span className="ml-1 text-gray-400">· Refreshing…</span>}
           </p>
         </div>
@@ -292,9 +346,23 @@ export default function InsightsPage() {
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({
+  label,
+  value,
+  hint,
+  strong,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  strong?: boolean;
+}) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div
+      className={`rounded-xl border bg-white p-4 ${
+        strong ? "border-[#d8c3aa] ring-1 ring-[#e7dccb]" : "border-gray-200"
+      }`}
+    >
       <div className="text-xs font-medium text-gray-500">{label}</div>
       <div className="mt-1 text-lg font-bold text-gray-900 sm:text-xl">{value}</div>
       {hint && <div className="mt-0.5 truncate text-[11px] text-gray-400">{hint}</div>}

@@ -32,6 +32,7 @@ interface Row {
   subcategory: string | null;
   qty: number;
   value: number;
+  kind: string; // product | discount | shipping
 }
 
 /** PostgREST caps a response at 1000 rows whatever `limit` says. */
@@ -60,26 +61,52 @@ export async function GET(req: NextRequest) {
     const subcategory = sp.get("subcategory");
     const minPrice = sp.get("minPrice") ? Number(sp.get("minPrice")) : null;
     const maxPrice = sp.get("maxPrice") ? Number(sp.get("maxPrice")) : null;
+    const channel = sp.get("channel"); // "online" | "offline"
+
+    // Odoo bills the website as branch "shopify"; everything else is a shop.
+    const isOnline = (branch: string) => /shopify|online/i.test(branch ?? "");
 
     const sb = createServiceClient();
-    const rows = await pageAll<Row>(() => {
-      let q = sb
-        .from("product_sales")
-        .select("day,branch,product_id,product_name,room,category,subcategory,qty,value");
-      if (from) q = q.gte("day", from);
-      if (to) q = q.lte("day", to);
-      if (room) q = q.eq("room", room);
-      if (category) q = q.eq("category", category);
-      if (subcategory) q = q.eq("subcategory", subcategory);
-      return q as unknown as {
-        range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      };
-    });
+    const read = (cols: string) =>
+      pageAll<Row>(() => {
+        let q = sb.from("product_sales").select(cols);
+        if (from) q = q.gte("day", from);
+        if (to) q = q.lte("day", to);
+        if (room) q = q.eq("room", room);
+        if (category) q = q.eq("category", category);
+        if (subcategory) q = q.eq("subcategory", subcategory);
+        return q as unknown as {
+          range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+        };
+      });
+
+    const COLS = "day,branch,product_id,product_name,room,category,subcategory,qty,value";
+    // `kind` arrives with migration_v14. Before it is run the column is not
+    // there and selecting it returns nothing, so fall back to the old shape
+    // rather than showing an empty page.
+    let allRows = await read(`${COLS},kind`);
+    if (allRows.length === 0) allRows = await read(COLS);
+
+    // Channel is filtered here rather than in the query: room and category are
+    // exact matches the database can do, but branch is a pattern.
+    const rows = channel
+      ? allRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
+      : allRows;
+
+    // Odoo files discounts and shipping with no sub-category, so every
+    // per-category view is built from product lines alone. They rejoin below
+    // for the sales totals, which is what makes those totals real sales
+    // rather than a before-discount figure.
+    const productRows = rows.filter((r) => (r.kind ?? "product") === "product");
+    const sumKind = (k: string) =>
+      rows.filter((r) => r.kind === k).reduce((acc, r) => acc + Number(r.value || 0), 0);
+    const discountValue = sumKind("discount");
+    const shippingValue = sumKind("shipping");
 
     // Unit price decides the band. Rows that net to zero units (a sale and its
     // refund landing on the same day) have no meaningful price, so they are
     // left out of the banding but still count in the totals.
-    const priced = rows.map((r) => ({
+    const priced = productRows.map((r) => ({
       ...r,
       unit: r.qty !== 0 ? r.value / r.qty : 0,
     }));
@@ -132,17 +159,37 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    const tally = (list: typeof inBand) => ({
+      units: list.reduce((acc, r) => acc + r.qty, 0),
+      value: list.reduce((acc, r) => acc + r.value, 0),
+      orders: list.length,
+    });
+
     const days = rows.map((r) => r.day).sort();
 
     return NextResponse.json({
       ok: true,
-      filters: { from, to, room, category, subcategory, minPrice, maxPrice },
+      filters: { from, to, room, category, subcategory, minPrice, maxPrice, channel },
       coverage: { first: days[0] ?? null, last: days[days.length - 1] ?? null, rows: rows.length },
       totals: {
-        units: inBand.reduce((s, r) => s + r.qty, 0),
-        value: inBand.reduce((s, r) => s + r.value, 0),
+        units: inBand.reduce((acc, r) => acc + r.qty, 0),
+        // gross = the product lines. discounts are negative. totalSales is what
+        // was actually billed, and is the figure comparable with the rest of
+        // the dashboard.
+        gross: inBand.reduce((acc, r) => acc + r.value, 0),
+        discounts: discountValue,
+        shipping: shippingValue,
+        totalSales: inBand.reduce((acc, r) => acc + r.value, 0) + discountValue + shippingValue,
         products: byProduct.size,
       },
+      // Gross only on these two: a discount line names no branch category.
+      channels: [
+        { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))) },
+        { label: "Branches", ...tally(inBand.filter((r) => !isOnline(r.branch))) },
+      ],
+      branches: [...new Set(productRows.map((r) => r.branch))]
+        .map((b) => ({ label: b, ...tally(inBand.filter((r) => r.branch === b)) }))
+        .sort((a, b) => b.value - a.value),
       rooms: sum(inBand, (r) => (r.room ?? "Other") as string),
       categories: sum(inBand, (r) => (r.category ?? "—") as string),
       subcategories: sum(inBand, (r) => (r.subcategory ?? "—") as string),
@@ -151,9 +198,9 @@ export async function GET(req: NextRequest) {
       // Everything the page needs to build its dropdowns, taken before the
       // room/category filters so choosing one does not empty the others.
       options: {
-        rooms: [...new Set(rows.map((r) => r.room).filter(Boolean))].sort() as string[],
-        categories: [...new Set(rows.map((r) => r.category).filter(Boolean))].sort() as string[],
-        subcategories: [...new Set(rows.map((r) => r.subcategory).filter(Boolean))].sort() as string[],
+        rooms: [...new Set(allRows.map((r) => r.room).filter(Boolean))].sort() as string[],
+        categories: [...new Set(allRows.map((r) => r.category).filter(Boolean))].sort() as string[],
+        subcategories: [...new Set(allRows.map((r) => r.subcategory).filter(Boolean))].sort() as string[],
       },
     });
   } catch (err) {

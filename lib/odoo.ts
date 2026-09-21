@@ -413,11 +413,23 @@ export interface ProductSalesRow {
   branch: string;
   product_id: number;
   product_name: string | null;
-  room: string;
-  category: string;
-  subcategory: string;
+  room: string | null;
+  category: string | null;
+  subcategory: string | null;
   qty: number;
   value: number;
+  kind: "product" | "discount" | "shipping";
+}
+
+/**
+ * Odoo files discounts and shipping under the bare "NS Home" category, with no
+ * sub-category. They cannot be attributed to Towels or Cushions, but leaving
+ * them out entirely makes revenue a before-discount figure — 95,409 of
+ * discount sat outside a 491,848 total in one fortnight. So they are kept and
+ * labelled, for the headline to use and the per-category views to ignore.
+ */
+function kindOf(productName: string | null | undefined): "discount" | "shipping" {
+  return /shipping|شحن/i.test(productName ?? "") ? "shipping" : "discount";
 }
 
 /**
@@ -428,8 +440,9 @@ export interface ProductSalesRow {
 export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[] {
   const map = new Map<string, ProductSalesRow>();
   for (const r of rows) {
-    const cat = parseCategory(r.product_category);
-    if (!cat) continue;
+    const raw = (r.product_category ?? "").trim();
+    if (!NS_PREFIX.test(raw) && raw.toLowerCase() !== "ns home") continue;
+    const cat = parseCategory(raw);
     const day = (r.invoice_date ?? "").slice(0, 10);
     const branch = (r.branch ?? "").trim();
     const productId = Number(r.product_id || 0);
@@ -447,11 +460,12 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
         branch,
         product_id: productId,
         product_name: r.product_name ?? null,
-        room: cat.room,
-        category: cat.category,
-        subcategory: cat.subcategory,
+        room: cat?.room ?? null,
+        category: cat?.category ?? null,
+        subcategory: cat?.subcategory ?? null,
         qty: Number(r.qty || 0) * sign,
         value: Number(r.price_total || 0) * sign,
+        kind: cat ? "product" : kindOf(r.product_name),
       });
     }
   }
