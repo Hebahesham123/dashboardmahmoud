@@ -69,11 +69,11 @@ export async function GET(req: NextRequest) {
     const isOnline = (branch: string) => /shopify|online/i.test(branch ?? "");
 
     const sb = createServiceClient();
-    const read = (cols: string) =>
+    const read = (cols: string, lo: string | null = from, hi: string | null = to) =>
       pageAll<Row>(() => {
         let q = sb.from("product_sales").select(cols);
-        if (from) q = q.gte("day", from);
-        if (to) q = q.lte("day", to);
+        if (lo) q = q.gte("day", lo);
+        if (hi) q = q.lte("day", hi);
         if (room) q = q.eq("room", room);
         if (category) q = q.eq("category", category);
         if (subcategory) q = q.eq("subcategory", subcategory);
@@ -212,6 +212,60 @@ export async function GET(req: NextRequest) {
 
     const days = rows.map((r) => r.day).sort();
 
+    // Sales by month, for the trend columns.
+    const byMonth = new Map<string, { units: number; value: number }>();
+    for (const r of inBand) {
+      const m = r.day.slice(0, 7);
+      const e = byMonth.get(m) ?? { units: 0, value: 0 };
+      e.units += r.qty;
+      e.value += r.value;
+      byMonth.set(m, e);
+    }
+    const timeseries = [...byMonth.entries()]
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    // The window immediately before this one, same length, for the deltas.
+    // On an all-time view "before" is meaningless, so the last 30 days are
+    // compared with the 30 before them instead.
+    const span = (a: string, b: string) =>
+      Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1);
+    const shift = (iso: string, n: number) => new Date(Date.parse(iso) + n * 86400000).toISOString().slice(0, 10);
+
+    let curFrom = from ?? days[0] ?? null;
+    let curTo = to ?? days[days.length - 1] ?? null;
+    if (!from && !to && curTo) {
+      curFrom = shift(curTo, -29);
+      curTo = curTo;
+    }
+    let previous: { units: number; value: number; from: string; to: string } | null = null;
+    if (curFrom && curTo) {
+      const len = span(curFrom, curTo);
+      const prevTo = shift(curFrom, -1);
+      const prevFrom = shift(prevTo, -(len - 1));
+      // Its own read: with a date filter set, the previous window is outside
+      // the rows already fetched.
+      const prevRows = await read(`${COLS},kind`, prevFrom, prevTo);
+      const prevScoped = channel
+        ? prevRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
+        : prevRows;
+      const prevProducts = prevScoped.filter((r) => (r.kind ?? "product") === "product");
+      previous = {
+        from: prevFrom,
+        to: prevTo,
+        units: prevProducts.reduce((acc, r) => acc + (Number(r.qty || 0) - Number(r.returned_qty || 0)), 0),
+        value: prevProducts.reduce((acc, r) => acc + (Number(r.value || 0) - Number(r.returned_value || 0)), 0),
+      };
+    }
+
+    // The current window on the same basis, so the two are comparable.
+    const current = {
+      from: curFrom,
+      to: curTo,
+      units: inBand.filter((r) => !curFrom || (r.day >= curFrom && r.day <= curTo!)).reduce((a, r) => a + r.qty, 0),
+      value: inBand.filter((r) => !curFrom || (r.day >= curFrom && r.day <= curTo!)).reduce((a, r) => a + r.value, 0),
+    };
+
     return NextResponse.json({
       ok: true,
       filters: { from, to, room, category, subcategory, minPrice, maxPrice, channel },
@@ -246,8 +300,15 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => b.value - a.value),
       rooms: sum(inBand, (r) => (r.room ?? "Other") as string),
       categories: sum(inBand, (r) => (r.category ?? "—") as string),
-      subcategories: sum(inBand, (r) => (r.subcategory ?? "—") as string),
+      // Carries its room so the bars can be coloured by room rather than all
+      // one hue — colour follows the entity, so a filter never repaints it.
+      subcategories: sum(inBand, (r) => (r.subcategory ?? "—") as string).map((sc) => ({
+        ...sc,
+        room: inBand.find((r) => (r.subcategory ?? "—") === sc.label)?.room ?? "Other",
+      })),
       bands,
+      timeseries,
+      trend: { current, previous },
       topProducts,
       slowProducts,
       // Everything the page needs to build its dropdowns, taken before the

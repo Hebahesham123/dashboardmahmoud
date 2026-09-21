@@ -9,6 +9,16 @@ interface Slice {
   units: number;
   value: number;
   orders: number;
+  room?: string;
+}
+interface Point {
+  label: string;
+  units: number;
+  value: number;
+}
+interface Trend {
+  current: { from: string | null; to: string | null; units: number; value: number };
+  previous: { from: string; to: string; units: number; value: number } | null;
 }
 interface Band {
   label: string;
@@ -48,6 +58,8 @@ interface Resp {
   categories: Slice[];
   subcategories: Slice[];
   bands: Band[];
+  timeseries: Point[];
+  trend: Trend;
   topProducts: Product[];
   slowProducts: Product[];
   returnedProducts: Product[];
@@ -64,6 +76,23 @@ interface Resp {
  */
 const INK = "#6f4423";
 const BAND_RAMP = ["#cca47c", "#b8885c", "#a26c40", "#8a5428", "#6f4120", "#553219"];
+
+/**
+ * Rooms are an identity, so they get categorical hues — and the mapping is by
+ * NAME, never by rank, so filtering the page can never repaint a survivor.
+ * These three slots validate on the all-pairs gate (worst normal-vision ΔE
+ * 24.0, CVD 9.2), which is what a donut needs; "Other" takes a neutral gray
+ * rather than a fourth hue, because slot four puts yellow beside orange and
+ * that pair fails the floor. Aqua sits under 3:1 on white, so every slice and
+ * bar carries a visible label — the relief the validator requires.
+ */
+const ROOM_COLOR: Record<string, string> = {
+  Bedroom: "#2a78d6",
+  "Living Room": "#eb6834",
+  Bathroom: "#1baf7a",
+  Other: "#9a948c",
+};
+const roomHue = (room?: string) => ROOM_COLOR[room ?? "Other"] ?? ROOM_COLOR.Other;
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -134,6 +163,43 @@ export default function InsightsPage() {
     .join(" · ");
   const returnRate =
     data && data.totals.soldUnits > 0 ? data.totals.returnedUnits / data.totals.soldUnits : 0;
+  const prevLabel = data?.trend.previous
+    ? `vs ${data.trend.previous.from.slice(5)} → ${data.trend.previous.to.slice(5)}`
+    : undefined;
+
+  // A handful of plain-language reads of the same numbers. They earn their
+  // place by saying the thing a glance at the charts would take a minute to
+  // work out — the leader and its share, the concentration, the return rate.
+  const highlights = useMemo(() => {
+    if (!data) return [] as { text: string; tone: "up" | "down" | "flat" }[];
+    const out: { text: string; tone: "up" | "down" | "flat" }[] = [];
+    const totalValue = data.rooms.reduce((s2, r) => s2 + r.value, 0);
+    const topRoom = data.rooms[0];
+    if (topRoom && totalValue > 0) {
+      out.push({
+        text: `${topRoom.label} is ${Math.round((topRoom.value / totalValue) * 100)}% of sales`,
+        tone: "flat",
+      });
+    }
+    const topSub = data.subcategories[0];
+    if (topSub) out.push({ text: `${topSub.label} leads at ${fmtMoney(topSub.value, currency)}`, tone: "flat" });
+    const d = delta(data.trend.current.value, data.trend.previous?.value);
+    if (d !== null) {
+      out.push({
+        text: `Sales ${d >= 0 ? "up" : "down"} ${Math.abs(Math.round(d * 100))}% on the previous period`,
+        tone: d >= 0 ? "up" : "down",
+      });
+    }
+    if (data.totals.returnedUnits > 0) {
+      out.push({
+        text: `${(returnRate * 100).toFixed(1)}% of pieces came back`,
+        tone: returnRate > 0.05 ? "down" : "flat",
+      });
+    }
+    const bandTop = [...data.bands].sort((a, b) => b.units - a.units)[0];
+    if (bandTop && bandTop.units > 0) out.push({ text: `Most pieces sell at ${bandTop.label}`, tone: "flat" });
+    return out;
+  }, [data, returnRate]);
 
   return (
     <div>
@@ -260,15 +326,42 @@ export default function InsightsPage() {
               label="Total sales"
               value={fmtMoney(data.totals.totalSales, currency)}
               hint={activeFilters ? `${periodLabel} · ${activeFilters}` : periodLabel}
+              delta={delta(data.trend.current.value, data.trend.previous?.value)}
+              deltaHint={prevLabel}
               strong
             />
-            <Stat label="Units sold" value={fmtNum(Math.round(data.totals.units))} hint="net of returns" />
+            <Stat
+              label="Units sold"
+              value={fmtNum(Math.round(data.totals.units))}
+              hint="net of returns"
+              delta={delta(data.trend.current.units, data.trend.previous?.units)}
+              deltaHint={prevLabel}
+            />
             <Stat
               label="Returns"
               value={fmtMoney(data.totals.returnedValue, currency)}
               hint={`${fmtNum(Math.round(data.totals.returnedUnits))} pieces · ${(returnRate * 100).toFixed(1)}% of units sold`}
             />
             <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
+          </div>
+
+          {highlights.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {highlights.map((h) => (
+                <Highlight key={h.text} text={h.text} tone={h.tone} />
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Panel title="Share by room" subtitle="part of the whole">
+              <Donut rows={data.rooms} currency={currency} />
+            </Panel>
+            <div className="lg:col-span-2">
+              <Panel title="Sales by month" subtitle="net of returns">
+                <Columns points={data.timeseries} currency={currency} />
+              </Panel>
+            </div>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -296,7 +389,13 @@ export default function InsightsPage() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="By room" subtitle="click a bar to filter the page">
-              <Bars rows={data.rooms} currency={currency} onPick={(l) => setRoom(l === room ? "" : l)} active={room} />
+              <Bars
+                rows={data.rooms}
+                currency={currency}
+                onPick={(l) => setRoom(l === room ? "" : l)}
+                active={room}
+                colorByRoom
+              />
             </Panel>
             <Panel title="By sub-category" subtitle="towels, fitted sheets, cushions …">
               <Bars
@@ -304,6 +403,7 @@ export default function InsightsPage() {
                 currency={currency}
                 onPick={(l) => setSubcategory(l === subcategory ? "" : l)}
                 active={subcategory}
+                colorByRoom
                 scroll
               />
             </Panel>
@@ -358,12 +458,167 @@ function Select({
   );
 }
 
-function Stat({ label, value, hint, strong }: { label: string; value: string; hint?: string; strong?: boolean }) {
+/** Change against the previous period, or null when there is nothing to compare. */
+function delta(current: number, previous: number | undefined): number | null {
+  if (previous === undefined || previous === 0) return null;
+  return (current - previous) / Math.abs(previous);
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  strong,
+  delta: d,
+  deltaHint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  strong?: boolean;
+  delta?: number | null;
+  deltaHint?: string;
+}) {
   return (
     <div className={`rounded-xl border bg-white p-4 ${strong ? "border-[#d8c3aa] bg-[#fdfbf8]" : "border-[#e7e2dc]"}`}>
       <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{label}</div>
-      <div className="mt-1.5 text-xl font-bold tabular-nums text-gray-900 sm:text-2xl">{value}</div>
-      {hint && <div className="mt-1 truncate text-[11px] text-gray-400">{hint}</div>}
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className="text-xl font-bold tabular-nums text-gray-900 sm:text-2xl">{value}</span>
+        {d !== null && d !== undefined && <Arrow value={d} />}
+      </div>
+      {(hint || deltaHint) && (
+        <div className="mt-1 truncate text-[11px] text-gray-400">
+          {hint}
+          {hint && deltaHint && d !== null && d !== undefined ? " · " : ""}
+          {d !== null && d !== undefined ? deltaHint : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Direction rides the glyph and the sign, not colour alone, so the arrow reads
+ * the same in grayscale and to a colourblind viewer.
+ */
+function Arrow({ value }: { value: number }) {
+  const up = value >= 0;
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+        up ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+      }`}
+      title={`${up ? "up" : "down"} ${Math.abs(value * 100).toFixed(1)}% on the previous period`}
+    >
+      <span aria-hidden="true">{up ? "\u25b2" : "\u25bc"}</span>
+      {Math.abs(Math.round(value * 100))}%
+    </span>
+  );
+}
+
+function Highlight({ text, tone }: { text: string; tone: "up" | "down" | "flat" }) {
+  const glyph = tone === "up" ? "\u25b2" : tone === "down" ? "\u25bc" : "\u2022";
+  const cls =
+    tone === "up"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : tone === "down"
+        ? "border-rose-200 bg-rose-50 text-rose-800"
+        : "border-[#e7e2dc] bg-white text-gray-700";
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${cls}`}>
+      <span aria-hidden="true" className="text-[10px] opacity-70">
+        {glyph}
+      </span>
+      {text}
+    </span>
+  );
+}
+
+/**
+ * Part-to-whole at a glance, four slices at most. Every slice is named in the
+ * legend beside it, so identity never rests on colour — which is also the
+ * relief the palette validator requires for the low-contrast slot.
+ */
+function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
+  const total = rows.reduce((acc, r) => acc + Math.max(0, r.value), 0);
+  if (!total) return <p className="py-6 text-center text-xs text-gray-400">Nothing in this selection.</p>;
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  let cursor = 0;
+  const arcs = rows
+    .filter((r) => r.value > 0)
+    .map((r) => {
+      const frac = r.value / total;
+      // 2px of surface between neighbours — the same spacer the bars use.
+      const len = Math.max(0, C * frac - 2);
+      const seg = { r, frac, len, offset: cursor };
+      cursor += C * frac;
+      return seg;
+    });
+  return (
+    <div className="flex items-center gap-4">
+      <svg viewBox="0 0 130 130" className="h-[130px] w-[130px] shrink-0" role="img" aria-label="Share by room">
+        <g transform="translate(65,65) rotate(-90)">
+          {arcs.map(({ r, len, offset }) => (
+            <circle
+              key={r.label}
+              r={R}
+              fill="none"
+              stroke={roomHue(r.label)}
+              strokeWidth={18}
+              strokeDasharray={`${len} ${C - len}`}
+              strokeDashoffset={-offset}
+            >
+              <title>{`${r.label} \u2014 ${fmtMoney(r.value, currency)}`}</title>
+            </circle>
+          ))}
+        </g>
+      </svg>
+      <ul className="min-w-0 flex-1 space-y-1.5">
+        {arcs.map(({ r, frac }) => (
+          <li key={r.label} className="flex items-baseline gap-2 text-xs">
+            <span
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: roomHue(r.label) }}
+            />
+            <span className="truncate text-gray-700">{r.label}</span>
+            <span className="ml-auto shrink-0 font-semibold tabular-nums text-gray-900">
+              {Math.round(frac * 100)}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Change over time as columns, not a line: the series is monthly and discrete,
+ * and a line would imply readings in between that do not exist.
+ */
+function Columns({ points, currency }: { points: Point[]; currency: string }) {
+  if (!points.length) return <p className="py-6 text-center text-xs text-gray-400">No months in this selection.</p>;
+  const max = Math.max(1, ...points.map((p) => Math.abs(p.value)));
+  const last = points[points.length - 1];
+  return (
+    <div>
+      <div className="flex h-[130px] items-end gap-1.5">
+        {points.map((p) => (
+          <div key={p.label} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
+            <div
+              className="w-full max-w-[24px] rounded-t-[4px] transition-opacity group-hover:opacity-75"
+              style={{ height: `${Math.max(2, (Math.abs(p.value) / max) * 100)}%`, backgroundColor: INK }}
+              title={`${p.label} \u2014 ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
+            />
+            <span className="w-full truncate text-center text-[9px] tabular-nums text-gray-400">
+              {p.label.slice(2)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px] text-gray-400">
+        Latest {last.label} &middot; <b className="text-gray-700">{fmtMoney(last.value, currency)}</b>
+      </p>
     </div>
   );
 }
@@ -391,12 +646,14 @@ function Bars({
   onPick,
   active,
   scroll,
+  colorByRoom,
 }: {
   rows: Slice[];
   currency: string;
   onPick?: (label: string) => void;
   active?: string;
   scroll?: boolean;
+  colorByRoom?: boolean;
 }) {
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)));
   if (!rows.length) return <p className="py-6 text-center text-xs text-gray-400">Nothing in this selection.</p>;
@@ -423,7 +680,7 @@ function Bars({
                   className="h-full rounded-r-[4px]"
                   style={{
                     width: `${Math.max(1.5, (Math.abs(r.value) / max) * 100)}%`,
-                    backgroundColor: INK,
+                    backgroundColor: colorByRoom ? roomHue(r.room ?? r.label) : INK,
                     opacity: !active || isActive ? 1 : 0.3,
                   }}
                 />
