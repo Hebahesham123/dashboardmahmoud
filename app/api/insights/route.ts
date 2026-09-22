@@ -389,7 +389,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       filters: { from, to, room, category, subcategory, minPrice, maxPrice, channel, branch },
-      coverage: { first: days[0] ?? null, last: days[days.length - 1] ?? null, rows: rows.length },
+      coverage: {
+        first: days[0] ?? null,
+        last: days[days.length - 1] ?? null,
+        rows: rows.length,
+        // Rows held regardless of the date filter, so the page can tell "no
+        // sales that day" apart from "nothing synced yet".
+        stored: allTimeRows.length,
+        latest: [...allTimeRows].map((r) => r.day).sort().pop() ?? null,
+      },
       totals: {
         units: inBand.reduce((acc, r) => acc + r.qty, 0),
         // gross = the product lines. discounts are negative. totalSales is what

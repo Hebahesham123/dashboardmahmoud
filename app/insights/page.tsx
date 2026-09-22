@@ -39,7 +39,13 @@ interface Product {
 interface Resp {
   ok: boolean;
   error?: string;
-  coverage: { first: string | null; last: string | null; rows: number };
+  coverage: {
+    first: string | null;
+    last: string | null;
+    rows: number;
+    stored: number;
+    latest: string | null;
+  };
   totals: {
     units: number;
     gross: number;
@@ -365,7 +371,16 @@ export default function InsightsPage() {
       {!data || data.coverage.rows === 0 ? (
         <EmptyState
           loading={loading}
-          label="No product sales stored yet — run migration_v13.sql, then scripts/backfill-products.ts."
+          label={
+            // An empty selection is not an empty table. Saying "run the
+            // migration" when the only problem is that today has no sales yet
+            // sends you off to fix something that is not broken.
+            !data || data.coverage.stored === 0
+              ? "No product sales stored yet — run migration_v13.sql, then scripts/backfill-products.ts."
+              : `No sales in this selection${
+                  data.coverage.latest ? `. Sales are synced up to ${data.coverage.latest}` : ""
+                }${activeFilters ? ` · filters: ${activeFilters}` : ""}.`
+          }
         />
       ) : (
         <div className="space-y-4">
