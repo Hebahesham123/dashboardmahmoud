@@ -37,6 +37,15 @@ interface Row {
   kind: string; // product | discount | shipping
 }
 
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const minIso = (a: string, b: string) => (a < b ? a : b);
+const daysBetween = (a: string, b: string) =>
+  Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1;
+const daysInMonth = (ym: string) => {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+};
+
 /** PostgREST caps a response at 1000 rows whatever `limit` says. */
 async function pageAll<T>(
   build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }> }
@@ -312,46 +321,69 @@ export async function GET(req: NextRequest) {
       .map(([label, v]) => ({ label, ...v }))
       .sort((a, b) => a.label.localeCompare(b.label));
 
-    // The window immediately before this one, same length, for the deltas.
-    // On an all-time view "before" is meaningless, so the last 30 days are
-    // compared with the 30 before them instead.
-    const span = (a: string, b: string) =>
-      Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1);
-    const shift = (iso: string, n: number) => new Date(Date.parse(iso) + n * 86400000).toISOString().slice(0, 10);
+    /**
+     * What a day is worth, against what a day of this month is worth.
+     *
+     * Comparing a day with the day before it says more about which weekday it
+     * was than about the business — a Sunday against a Saturday reads as a
+     * collapse. The baseline is the month's own daily average instead, on the
+     * same footing as the headline (branch sales from Odoo, online from
+     * Shopify), so a single day, a week and the whole month are all readable
+     * on one scale.
+     */
+    const lastDay = days[days.length - 1] ?? todayIso();
+    const baseMonth = (to ?? lastDay).slice(0, 7);
+    const monthFrom = `${baseMonth}-01`;
+    const monthTo = minIso(`${baseMonth}-${daysInMonth(baseMonth)}`, todayIso());
 
-    let curFrom = from ?? days[0] ?? null;
-    let curTo = to ?? days[days.length - 1] ?? null;
-    if (!from && !to && curTo) {
-      curFrom = shift(curTo, -29);
-      curTo = curTo;
-    }
-    let previous: { units: number; value: number; from: string; to: string } | null = null;
-    if (curFrom && curTo) {
-      const len = span(curFrom, curTo);
-      const prevTo = shift(curFrom, -1);
-      const prevFrom = shift(prevTo, -(len - 1));
-      // Its own read: with a date filter set, the previous window is outside
-      // the rows already fetched.
-      const prevRows = await read(`${COLS},kind`, prevFrom, prevTo);
-      let prevScoped = channel
-        ? prevRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
-        : prevRows;
-      if (branch) prevScoped = prevScoped.filter((r) => r.branch === branch);
-      const prevProducts = prevScoped.filter((r) => (r.kind ?? "product") === "product");
-      previous = {
-        from: prevFrom,
-        to: prevTo,
-        units: prevProducts.reduce((acc, r) => acc + (Number(r.qty || 0) - Number(r.returned_qty || 0)), 0),
-        value: prevProducts.reduce((acc, r) => acc + (Number(r.value || 0) - Number(r.returned_value || 0)), 0),
-      };
-    }
+    const inMonth = (d: string) => d >= monthFrom && d <= monthTo;
+    const monthRows = allTimeScoped.filter((r) => inMonth(r.day));
+    const monthBranchSales = monthRows
+      .filter((r) => !isOnline(r.branch))
+      .reduce((acc, r) => acc + netOf(r), 0);
 
-    // The current window on the same basis, so the two are comparable.
-    const current = {
-      from: curFrom,
-      to: curTo,
-      units: inBand.filter((r) => !curFrom || (r.day >= curFrom && r.day <= curTo!)).reduce((a, r) => a + r.qty, 0),
-      value: inBand.filter((r) => !curFrom || (r.day >= curFrom && r.day <= curTo!)).reduce((a, r) => a + r.value, 0),
+    let monthOnlineSales = 0;
+    if (onlineSource === "shopify") {
+      const { data: dmMonth } = await sb
+        .from("daily_metrics")
+        .select("day,total_sales")
+        .gte("day", monthFrom)
+        .lte("day", monthTo);
+      monthOnlineSales = ((dmMonth ?? []) as { total_sales: number }[]).reduce(
+        (acc, r) => acc + Number(r.total_sales || 0),
+        0
+      );
+    } else {
+      monthOnlineSales = monthRows.filter((r) => isOnline(r.branch)).reduce((acc, r) => acc + netOf(r), 0);
+    }
+    const monthUnits = monthRows
+      .filter((r) => (r.kind ?? "product") === "product")
+      .reduce((acc, r) => acc + (Number(r.qty || 0) - Number(r.returned_qty || 0)), 0);
+
+    const monthDays = Math.max(1, daysBetween(monthFrom, monthTo));
+    const windowFrom = from ?? days[0] ?? monthFrom;
+    const windowTo = to ?? lastDay;
+    const windowDays = Math.max(1, daysBetween(windowFrom, windowTo));
+
+    const currentValue = onlineSales + branchSales;
+    const currentUnits = inBand.reduce((acc, r) => acc + r.qty, 0);
+    const trend = {
+      // Per day, on both sides, so any window length compares like for like.
+      current: {
+        from: windowFrom,
+        to: windowTo,
+        days: windowDays,
+        value: currentValue / windowDays,
+        units: currentUnits / windowDays,
+      },
+      baseline: {
+        label: `daily average, ${baseMonth}`,
+        from: monthFrom,
+        to: monthTo,
+        days: monthDays,
+        value: (monthBranchSales + monthOnlineSales) / monthDays,
+        units: monthUnits / monthDays,
+      },
     };
 
     return NextResponse.json({
@@ -429,7 +461,7 @@ export async function GET(req: NextRequest) {
       timeseries,
       daily,
       monthly,
-      trend: { current, previous },
+      trend,
       topProducts,
       slowProducts,
       // Everything the page needs to build its dropdowns, taken before the

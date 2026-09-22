@@ -17,8 +17,9 @@ interface Point {
   value: number;
 }
 interface Trend {
-  current: { from: string | null; to: string | null; units: number; value: number };
-  previous: { from: string; to: string; units: number; value: number } | null;
+  // Both sides are per day, so any window length compares like for like.
+  current: { from: string; to: string; days: number; units: number; value: number };
+  baseline: { label: string; from: string; to: string; days: number; units: number; value: number };
 }
 interface Band {
   label: string;
@@ -193,9 +194,7 @@ export default function InsightsPage() {
     .join(" · ");
   // Days while the window is short enough to read; months beyond that.
   const byDay = !allTime && (data?.daily.length ?? 0) > 0 && (data?.daily.length ?? 0) <= 62;
-  const prevLabel = data?.trend.previous
-    ? `vs ${data.trend.previous.from.slice(5)} → ${data.trend.previous.to.slice(5)}`
-    : undefined;
+  const prevLabel = data ? `vs ${data.trend.baseline.label}` : undefined;
 
   // A handful of plain-language reads of the same numbers. They earn their
   // place by saying the thing a glance at the charts would take a minute to
@@ -213,10 +212,10 @@ export default function InsightsPage() {
     }
     const topSub = data.subcategories[0];
     if (topSub) out.push({ text: `${topSub.label} leads at ${fmtMoney(topSub.value, currency)}`, tone: "flat" });
-    const d = delta(data.trend.current.value, data.trend.previous?.value);
+    const d = delta(data.trend.current.value, data.trend.baseline.value);
     if (d !== null) {
       out.push({
-        text: `Sales ${d >= 0 ? "up" : "down"} ${Math.abs(Math.round(d * 100))}% on the previous period`,
+        text: `${Math.abs(Math.round(d * 100))}% ${d >= 0 ? "above" : "below"} an average day this month`,
         tone: d >= 0 ? "up" : "down",
       });
     }
@@ -375,7 +374,7 @@ export default function InsightsPage() {
               label="Total sales"
               value={fmtMoney(data.totals.totalSales, currency)}
               hint={activeFilters ? `${periodLabel} · ${activeFilters}` : periodLabel}
-              delta={delta(data.trend.current.value, data.trend.previous?.value)}
+              delta={delta(data.trend.current.value, data.trend.baseline.value)}
               deltaHint={prevLabel}
               strong
             />
@@ -383,7 +382,7 @@ export default function InsightsPage() {
               label="Units sold"
               value={fmtNum(Math.round(data.totals.units))}
               hint="pieces"
-              delta={delta(data.trend.current.units, data.trend.previous?.units)}
+              delta={delta(data.trend.current.units, data.trend.baseline.units)}
               deltaHint={prevLabel}
             />
             <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
@@ -560,7 +559,7 @@ function Arrow({ value }: { value: number }) {
       className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
         up ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
       }`}
-      title={`${up ? "up" : "down"} ${Math.abs(value * 100).toFixed(1)}% on the previous period`}
+      title={`${up ? "above" : "below"} an average day this month by ${Math.abs(value * 100).toFixed(1)}%`}
     >
       <span aria-hidden="true">{up ? "\u25b2" : "\u25bc"}</span>
       {Math.abs(Math.round(value * 100))}%
