@@ -653,6 +653,27 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
  * Change over time as columns, not a line: the series is monthly and discrete,
  * and a line would imply readings in between that do not exist.
  */
+/** 112,942 -> "113k". Short enough to sit above a column without colliding. */
+function compact(n: number): string {
+  const v = Math.abs(n);
+  if (v >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(Math.round(n));
+}
+
+/** "2026-09" -> "Sep", or "Sep 26" when the series crosses a year. */
+function monthLabel(ym: string, withYear: boolean): string {
+  const [y, m] = ym.split("-").map(Number);
+  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en", { month: "short", timeZone: "UTC" });
+  return withYear ? `${name} ${String(y).slice(2)}` : name;
+}
+
+/**
+ * Change over time as columns, not a line: the series is discrete, and a line
+ * would imply readings between the points that do not exist. Every column is
+ * labelled with its value — normally a chart labels selectively, but these are
+ * few enough to read and the number is the thing being asked for.
+ */
 function Columns({
   points,
   currency,
@@ -662,37 +683,34 @@ function Columns({
   currency: string;
   unit?: "day" | "month";
 }) {
-  if (!points.length) return <p className="py-6 text-center text-xs text-gray-400">No months in this selection.</p>;
+  if (!points.length) return <p className="py-6 text-center text-xs text-gray-400">No data in this selection.</p>;
   const max = Math.max(1, ...points.map((p) => Math.abs(p.value)));
   const peak = points.reduce((a, b) => (Math.abs(b.value) > Math.abs(a.value) ? b : a));
-  // Heights in pixels, not percentages: the column wrapper is sized by its
-  // content, and a percentage height against an auto-height parent resolves to
-  // nothing — which is how this chart first rendered, all labels and no bars.
-  const PLOT = 124;
+  const spansYears = new Set(points.map((p) => p.label.slice(0, 4))).size > 1;
+  const label = (p: Point) => (unit === "day" ? p.label.slice(8) : monthLabel(p.label, spansYears));
+  // Heights in pixels: a percentage against a content-sized parent resolves to
+  // nothing, which is how this chart first rendered — labels and no bars.
+  const PLOT = 150;
+  const CAP = 16; // room for the value sitting above the tallest column
   return (
     <div>
-      <div className="relative">
-        <span className="absolute -top-2 left-0 z-10 bg-white pr-1 text-[9px] tabular-nums text-gray-300">
-          {fmtMoney(max, currency)}
-        </span>
-        {/* One recessive reference line at the top of the scale, so a column
-            can be read against something rather than floating. */}
-        <div className="absolute inset-x-0 top-0 border-t border-[#f2eee9]" />
-        <div className="flex items-end gap-1 overflow-hidden border-b border-[#e7e2dc]" style={{ height: PLOT }}>
-          {points.map((p) => (
-            <div key={p.label} className="group flex min-w-0 flex-1 justify-center">
-              <div
-                className="w-full max-w-[38px] rounded-t-[4px] transition-opacity group-hover:opacity-70"
-                style={{
-                  height: Math.max(2, (Math.abs(p.value) / max) * (PLOT - 6)),
-                  backgroundColor: INK,
-                  opacity: p.label === peak.label ? 1 : 0.75,
-                }}
-                title={`${p.label} — ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
-              />
-            </div>
-          ))}
-        </div>
+      <div className="flex items-end gap-1 overflow-hidden border-b border-[#e7e2dc]" style={{ height: PLOT }}>
+        {points.map((p) => (
+          <div key={p.label} className="group flex min-w-0 flex-1 flex-col items-center justify-end">
+            <span className="mb-0.5 w-full truncate text-center text-[9px] font-semibold tabular-nums text-gray-500">
+              {compact(p.value)}
+            </span>
+            <div
+              className="w-full max-w-[38px] rounded-t-[4px] transition-opacity group-hover:opacity-70"
+              style={{
+                height: Math.max(2, (Math.abs(p.value) / max) * (PLOT - CAP - 4)),
+                backgroundColor: INK,
+                opacity: p.label === peak.label ? 1 : 0.75,
+              }}
+              title={`${p.label} — ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
+            />
+          </div>
+        ))}
       </div>
       <div className="flex gap-1 overflow-hidden">
         {points.map((p) => (
@@ -700,18 +718,17 @@ function Columns({
             key={p.label}
             className="min-w-0 flex-1 truncate pt-1.5 text-center text-[10px] tabular-nums text-gray-400"
           >
-            {unit === "day" ? p.label.slice(8) : p.label.slice(2)}
+            {label(p)}
           </span>
         ))}
       </div>
       <p className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px] text-gray-400">
-        Best {unit} {peak.label} &middot; <b className="text-gray-700">{fmtMoney(peak.value, currency)}</b>
+        Best {unit} {unit === "day" ? peak.label : monthLabel(peak.label, true)} &middot;{" "}
+        <b className="text-gray-700">{fmtMoney(peak.value, currency)}</b>
       </p>
     </div>
   );
 }
-
-
 
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
