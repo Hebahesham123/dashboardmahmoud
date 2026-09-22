@@ -46,6 +46,10 @@ const addDays = (iso: string, n: number) => {
     totalLines += lines.length;
 
     const now = new Date().toISOString();
+    // Clear the week before writing it, so a shop renamed in Odoo does not
+    // leave its old rows behind under the previous name.
+    const { error: delErr } = await sb.from("product_sales").delete().gte("day", start).lte("day", end);
+    if (delErr) throw new Error(`${start}: ${delErr.message}`);
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500).map((r) => ({ ...r, updated_at: now }));
       const { error } = await sb

@@ -51,6 +51,17 @@ async function handle(req: NextRequest) {
       if (error) throw error;
     }
     if (branchDays.length) {
+      // Clear the window first. The key is (day, branch), so when Odoo renames
+      // a shop the old name's rows are never overwritten — they just sit there
+      // and get counted again. "مول العرب Ns Home (Both)" became "(Booth)" and
+      // added 21,245 to a September that already had it.
+      const { error: delErr } = await sb
+        .from("offline_branch_sales")
+        .delete()
+        .gte("day", from)
+        .lte("day", to);
+      if (delErr) throw delErr;
+
       const { error } = await sb
         .from("offline_branch_sales")
         .upsert(

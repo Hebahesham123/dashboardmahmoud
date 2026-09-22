@@ -72,6 +72,14 @@ const addDays = (iso: string, n: number) => {
       dayRows += days.length;
     }
     if (byBranch.length) {
+      // Clear the week first: the key carries the branch name, so a shop
+      // renamed in Odoo would leave its old rows behind to be counted twice.
+      const { error: delErr } = await sb
+        .from("offline_branch_sales")
+        .delete()
+        .gte("day", start)
+        .lte("day", end);
+      if (delErr) throw delErr;
       const { error } = await sb
         .from("offline_branch_sales")
         .upsert(byBranch.map((d) => ({ ...d, updated_at: now })), { onConflict: "day,branch" });

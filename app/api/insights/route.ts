@@ -146,74 +146,21 @@ export async function GET(req: NextRequest) {
         (minPrice === null || r.unit >= minPrice) && (maxPrice === null || r.unit <= maxPrice)
     );
 
-    const sum = <K extends string>(list: typeof inBand, key: (r: (typeof inBand)[number]) => K) => {
-      const m = new Map<K, { units: number; value: number; orders: number }>();
-      for (const r of list) {
-        const k = key(r);
-        const e = m.get(k) ?? { units: 0, value: 0, orders: 0 };
-        e.units += r.qty;
-        e.value += r.value;
-        e.orders += 1;
-        m.set(k, e);
-      }
-      return [...m.entries()]
-        .map(([label, v]) => ({ label, ...v }))
-        .sort((a, b) => b.value - a.value);
-    };
+    /**
+     * Odoo books a discount against no category, so a room cannot be told what
+     * share of one it caused. The discount is spread across the product lines
+     * in proportion to their value — a uniform factor, which is what pro-rata
+     * by value comes to — so every per-category figure is after discount and
+     * the parts still add up to the whole they came from.
+     *
+     * It is an apportionment, not a fact about any single sale, and the page
+     * says so.
+     */
+    const grossAll = productRows.reduce(
+      (acc, r) => acc + (Number(r.value || 0) - Number(r.returned_value || 0)),
+      0
+    );
 
-    // One product is one product, however many days and branches it sold across.
-    const byProduct = new Map<
-      number,
-      {
-        name: string;
-        units: number;
-        value: number;
-        subcategory: string;
-        lastSold: string;
-        returnedUnits: number;
-        returnedValue: number;
-      }
-    >();
-    for (const r of inBand) {
-      const e = byProduct.get(r.product_id) ?? {
-        name: r.product_name ?? String(r.product_id),
-        units: 0,
-        value: 0,
-        subcategory: r.subcategory ?? "",
-        lastSold: r.day,
-        returnedUnits: 0,
-        returnedValue: 0,
-      };
-      e.units += r.qty;
-      e.value += r.value;
-      e.returnedUnits += r.returnedQty;
-      e.returnedValue += r.returnedValue;
-      if (r.qty > 0 && r.day > e.lastSold) e.lastSold = r.day;
-      byProduct.set(r.product_id, e);
-    }
-    const products = [...byProduct.entries()].map(([product_id, v]) => ({ product_id, ...v }));
-    const topProducts = [...products].sort((a, b) => b.value - a.value).slice(0, 10);
-
-    // Slow movers: fewest units shifted, among things that did sell. Products
-    // with no net movement (a sale cancelled by its refund) are a different
-    // problem and would crowd out the genuinely slow ones. `lastSold` is the
-    // column that makes the list actionable — a low count from last week is
-    // not the same as a low count from March.
-    const slowProducts = products
-      .filter((p) => p.units > 0)
-      .sort((a, b) => a.units - b.units || a.value - b.value)
-      .slice(0, 10);
-
-    const bands = PRICE_BANDS.map((b) => {
-      const hit = inBand.filter((r) => r.unit >= b.min && (b.max === null || r.unit < b.max));
-      return {
-        label: b.label,
-        min: b.min,
-        max: b.max,
-        units: hit.reduce((s, r) => s + r.qty, 0),
-        value: hit.reduce((s, r) => s + r.value, 0),
-      };
-    });
 
     /**
      * Sales the way the Summary page counts them: every NS Home line on the
@@ -264,6 +211,88 @@ export async function GET(req: NextRequest) {
 
     const onlineSales = onlineSource === "shopify" ? shopifyOnline : salesOf((r) => isOnline(r.branch));
     const branchSales = salesOf((r) => !isOnline(r.branch));
+    const totalSales = onlineSales + branchSales;
+
+    // Scale the per-category figures so they add up to the total they came
+    // from. Everything unattributable rides along pro-rata: the discount Odoo
+    // books against no category, the shipping line, and the gap between Odoo's
+    // copy of the website and Shopify's own. Before this the rooms summed to
+    // 657,677 under a 744,060 total and there was no way to see why.
+    const netFactor = grossAll > 0 ? totalSales / grossAll : 1;
+    const net = (v: number) => v * netFactor;
+
+    const sum = <K extends string>(list: typeof inBand, key: (r: (typeof inBand)[number]) => K) => {
+      const m = new Map<K, { units: number; value: number; orders: number }>();
+      for (const r of list) {
+        const k = key(r);
+        const e = m.get(k) ?? { units: 0, value: 0, orders: 0 };
+        e.units += r.qty;
+        e.value += r.value;
+        e.orders += 1;
+        m.set(k, e);
+      }
+      return [...m.entries()]
+        .map(([label, v]) => ({ label, ...v, value: net(v.value) }))
+        .sort((a, b) => b.value - a.value);
+    };
+
+    // One product is one product, however many days and branches it sold across.
+    const byProduct = new Map<
+      number,
+      {
+        name: string;
+        units: number;
+        value: number;
+        subcategory: string;
+        lastSold: string;
+        returnedUnits: number;
+        returnedValue: number;
+      }
+    >();
+    for (const r of inBand) {
+      const e = byProduct.get(r.product_id) ?? {
+        name: r.product_name ?? String(r.product_id),
+        units: 0,
+        value: 0,
+        subcategory: r.subcategory ?? "",
+        lastSold: r.day,
+        returnedUnits: 0,
+        returnedValue: 0,
+      };
+      e.units += r.qty;
+      e.value += r.value;
+      e.returnedUnits += r.returnedQty;
+      e.returnedValue += r.returnedValue;
+      if (r.qty > 0 && r.day > e.lastSold) e.lastSold = r.day;
+      byProduct.set(r.product_id, e);
+    }
+    const products = [...byProduct.entries()].map(([product_id, v]) => ({
+      product_id,
+      ...v,
+      value: net(v.value),
+    }));
+    const topProducts = [...products].sort((a, b) => b.value - a.value).slice(0, 10);
+
+    // Slow movers: fewest units shifted, among things that did sell. Products
+    // with no net movement (a sale cancelled by its refund) are a different
+    // problem and would crowd out the genuinely slow ones. `lastSold` is the
+    // column that makes the list actionable — a low count from last week is
+    // not the same as a low count from March.
+    const slowProducts = products
+      .filter((p) => p.units > 0)
+      .sort((a, b) => a.units - b.units || a.value - b.value)
+      .slice(0, 10);
+
+    const bands = PRICE_BANDS.map((b) => {
+      const hit = inBand.filter((r) => r.unit >= b.min && (b.max === null || r.unit < b.max));
+      return {
+        label: b.label,
+        min: b.min,
+        max: b.max,
+        units: hit.reduce((s, r) => s + r.qty, 0),
+        value: net(hit.reduce((s, r) => s + r.value, 0)),
+      };
+    });
 
     const tally = (list: typeof inBand) => ({
       units: list.reduce((acc, r) => acc + r.qty, 0),
@@ -273,7 +302,45 @@ export async function GET(req: NextRequest) {
 
     const days = rows.map((r) => r.day).sort();
 
-    // Sales by month, for the trend columns.
+    // The charts do not need apportioning: summing every line of a day, the
+    // discount ones included, is exact. Online comes from Shopify per day so a
+    // column and the headline agree.
+    const onlineByDay = new Map<string, number>();
+    if (onlineSource === "shopify") {
+      const { data: dmAll } = await sb.from("daily_metrics").select("day,total_sales");
+      for (const r of (dmAll ?? []) as { day: string; total_sales: number }[]) {
+        onlineByDay.set((r.day ?? "").slice(0, 10), Number(r.total_sales || 0));
+      }
+    }
+    const seriesFor = (src: Row[], keyOf: (day: string) => string) => {
+      const m = new Map<string, { units: number; value: number }>();
+      const touch = (k: string) => {
+        const e = m.get(k) ?? { units: 0, value: 0 };
+        m.set(k, e);
+        return e;
+      };
+      for (const r of src) {
+        const e = touch(keyOf(r.day));
+        if ((r.kind ?? "product") === "product") {
+          e.units += Number(r.qty || 0) - Number(r.returned_qty || 0);
+        }
+        // Online value comes from Shopify below; Odoo's copy of it is skipped.
+        if (onlineSource === "shopify" && isOnline(r.branch)) continue;
+        e.value += netOf(r);
+      }
+      if (onlineSource === "shopify") {
+        const lo = src.length ? src.reduce((a, r) => (r.day < a ? r.day : a), src[0].day) : null;
+        const hi = src.length ? src.reduce((a, r) => (r.day > a ? r.day : a), src[0].day) : null;
+        for (const [day, v] of onlineByDay) {
+          if (lo && hi && (day < lo || day > hi)) continue;
+          touch(keyOf(day)).value += v;
+        }
+      }
+      return [...m.entries()]
+        .map(([label, v]) => ({ label, ...v }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    };
+
     const byMonth = new Map<string, { units: number; value: number }>();
     for (const r of inBand) {
       const m = r.day.slice(0, 7);
@@ -282,9 +349,7 @@ export async function GET(req: NextRequest) {
       e.value += r.value;
       byMonth.set(m, e);
     }
-    const timeseries = [...byMonth.entries()]
-      .map(([label, v]) => ({ label, ...v }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const timeseries = seriesFor(rows, (d) => d.slice(0, 7));
 
     // Months across the whole record, ignoring the date filter but keeping the
     // rest: the day chart answers "how is this month going", this one answers
@@ -304,9 +369,7 @@ export async function GET(req: NextRequest) {
       e.value += Number(r.value || 0) - Number(r.returned_value || 0);
       byMonthAll.set(m, e);
     }
-    const monthly = [...byMonthAll.entries()]
-      .map(([label, v]) => ({ label, ...v }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const monthly = seriesFor(allTimeScoped, (d) => d.slice(0, 7));
 
     // The same shape by day. A short window wants days; a long one wants
     // months, and the page picks whichever suits the range it is showing.
@@ -317,9 +380,7 @@ export async function GET(req: NextRequest) {
       e.value += r.value;
       byDay.set(r.day, e);
     }
-    const daily = [...byDay.entries()]
-      .map(([label, v]) => ({ label, ...v }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const daily = seriesFor(rows, (d) => d);
 
     /**
      * What a day is worth, against what a day of this month is worth.
@@ -403,10 +464,11 @@ export async function GET(req: NextRequest) {
         // gross = the product lines. discounts are negative. totalSales is what
         // was actually billed, and is the figure comparable with the rest of
         // the dashboard.
-        gross: inBand.reduce((acc, r) => acc + r.value, 0),
+        gross: grossAll,
+        netFactor,
         discounts: discountValue,
         shipping: shippingValue,
-        totalSales: onlineSales + branchSales,
+        totalSales,
         priceFiltered,
         onlineSource,
         products: byProduct.size,

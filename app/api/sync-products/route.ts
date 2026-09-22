@@ -38,6 +38,12 @@ async function handle(req: NextRequest) {
 
     const sb = createServiceClient();
     const now = new Date().toISOString();
+
+    // Same reason as offline_branch_sales: the key carries the branch name, so
+    // a renamed shop would leave its old rows behind to be counted twice.
+    const { error: delErr } = await sb.from("product_sales").delete().gte("day", from).lte("day", to);
+    if (delErr) throw new Error(`product_sales clear: ${delErr.message}`);
+
     let upserted = 0;
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500).map((r) => ({ ...r, updated_at: now }));

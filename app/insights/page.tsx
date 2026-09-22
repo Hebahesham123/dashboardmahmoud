@@ -458,10 +458,10 @@ export default function InsightsPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel
               title="By room"
-              subtitle={`before discount · sums to ${fmtMoney(
+              subtitle={`sums to ${fmtMoney(
                 data.rooms.reduce((a, r) => a + r.value, 0),
                 currency
-              )}`}
+              )} — total sales`}
             >
               <Bars
                 rows={data.rooms}
@@ -495,9 +495,10 @@ export default function InsightsPage() {
           <p className="px-1 text-[11px] leading-relaxed text-gray-400">
             NS Home retail only, online and in the shops — the fabric and commercial catalogue is excluded. Total sales
             is product value after discounts and with shipping, so it matches the rest of the dashboard; every
-            per-room, per-category and per-product figure is product value before discount, because Odoo books a
-            discount against no category — which is why the room bars sum to less than Total sales, and why the online
-            part of them comes from Odoo rather than Shopify. Units and revenue are net of anything returned.
+            per-room, per-category and per-product figure is scaled so the parts add up to that total: Odoo books a
+            discount against no category, shipping belongs to none, and Odoo's copy of the website differs from
+            Shopify's, so those ride along in proportion to value rather than being dropped. That makes a single
+            category figure an apportionment, not the exact value of one sale. Units and revenue are net of anything returned.
             Price bands use the unit price (value ÷ units).
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
