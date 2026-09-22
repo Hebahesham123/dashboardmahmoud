@@ -55,6 +55,7 @@ interface Resp {
   bands: Band[];
   timeseries: Point[];
   daily: Point[];
+  monthly: Point[];
   trend: Trend;
   topProducts: Product[];
   slowProducts: Product[];
@@ -402,10 +403,20 @@ export default function InsightsPage() {
             </Panel>
             <div className="lg:col-span-2">
               <Panel title={byDay ? "Sales by day" : "Sales by month"} subtitle="EGP">
-                <Columns points={byDay ? data.daily : data.timeseries} currency={currency} />
+                <Columns
+                  points={byDay ? data.daily : data.timeseries}
+                  currency={currency}
+                  unit={byDay ? "day" : "month"}
+                />
               </Panel>
             </div>
           </div>
+
+          {byDay && data.monthly.length > 1 && (
+            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
+              <Columns points={data.monthly} currency={currency} unit="month" />
+            </Panel>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Where it sells" subtitle="online against the shops, then branch by branch">
@@ -643,7 +654,15 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
  * Change over time as columns, not a line: the series is monthly and discrete,
  * and a line would imply readings in between that do not exist.
  */
-function Columns({ points, currency }: { points: Point[]; currency: string }) {
+function Columns({
+  points,
+  currency,
+  unit = "month",
+}: {
+  points: Point[];
+  currency: string;
+  unit?: "day" | "month";
+}) {
   if (!points.length) return <p className="py-6 text-center text-xs text-gray-400">No months in this selection.</p>;
   const max = Math.max(1, ...points.map((p) => Math.abs(p.value)));
   const peak = points.reduce((a, b) => (Math.abs(b.value) > Math.abs(a.value) ? b : a));
@@ -660,7 +679,7 @@ function Columns({ points, currency }: { points: Point[]; currency: string }) {
         {/* One recessive reference line at the top of the scale, so a column
             can be read against something rather than floating. */}
         <div className="absolute inset-x-0 top-0 border-t border-[#f2eee9]" />
-        <div className="flex items-end gap-2 border-b border-[#e7e2dc]" style={{ height: PLOT }}>
+        <div className="flex items-end gap-1 overflow-hidden border-b border-[#e7e2dc]" style={{ height: PLOT }}>
           {points.map((p) => (
             <div key={p.label} className="group flex min-w-0 flex-1 justify-center">
               <div
@@ -676,18 +695,18 @@ function Columns({ points, currency }: { points: Point[]; currency: string }) {
           ))}
         </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex gap-1 overflow-hidden">
         {points.map((p) => (
           <span
             key={p.label}
             className="min-w-0 flex-1 truncate pt-1.5 text-center text-[10px] tabular-nums text-gray-400"
           >
-            {p.label.slice(2)}
+            {unit === "day" ? p.label.slice(8) : p.label.slice(2)}
           </span>
         ))}
       </div>
       <p className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px] text-gray-400">
-        Best month {peak.label} &middot; <b className="text-gray-700">{fmtMoney(peak.value, currency)}</b>
+        Best {unit} {peak.label} &middot; <b className="text-gray-700">{fmtMoney(peak.value, currency)}</b>
       </p>
     </div>
   );

@@ -227,6 +227,28 @@ export async function GET(req: NextRequest) {
       .map(([label, v]) => ({ label, ...v }))
       .sort((a, b) => a.label.localeCompare(b.label));
 
+    // Months across the whole record, ignoring the date filter but keeping the
+    // rest: the day chart answers "how is this month going", this one answers
+    // "how do the months compare", and that second question is not about the
+    // selected window. It needs its own read — the main one is date-bounded.
+    const allTimeRows = from || to ? await read(`${COLS},kind`, null, null) : allRows;
+    let allTimeScoped = channel
+      ? allTimeRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
+      : allTimeRows;
+    if (branch) allTimeScoped = allTimeScoped.filter((r) => r.branch === branch);
+    const byMonthAll = new Map<string, { units: number; value: number }>();
+    for (const r of allTimeScoped) {
+      if ((r.kind ?? "product") !== "product") continue;
+      const m = r.day.slice(0, 7);
+      const e = byMonthAll.get(m) ?? { units: 0, value: 0 };
+      e.units += Number(r.qty || 0) - Number(r.returned_qty || 0);
+      e.value += Number(r.value || 0) - Number(r.returned_value || 0);
+      byMonthAll.set(m, e);
+    }
+    const monthly = [...byMonthAll.entries()]
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
     // The same shape by day. A short window wants days; a long one wants
     // months, and the page picks whichever suits the range it is showing.
     const byDay = new Map<string, { units: number; value: number }>();
@@ -351,6 +373,7 @@ export async function GET(req: NextRequest) {
       bands,
       timeseries,
       daily,
+      monthly,
       trend: { current, previous },
       topProducts,
       slowProducts,
