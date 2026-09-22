@@ -411,6 +411,12 @@ export default function InsightsPage() {
             </div>
           )}
 
+          {data.monthly.length > 1 && (
+            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
+              <Columns points={data.monthly} currency={currency} unit="month" />
+            </Panel>
+          )}
+
           <div className="grid gap-4 lg:grid-cols-3">
             <Panel title="Share by room" subtitle="part of the whole">
               <Donut rows={data.rooms} currency={currency} />
@@ -425,12 +431,6 @@ export default function InsightsPage() {
               </Panel>
             </div>
           </div>
-
-          {byDay && data.monthly.length > 1 && (
-            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
-              <Columns points={data.monthly} currency={currency} unit="month" />
-            </Panel>
-          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Where it sells" subtitle="online against the shops, then branch by branch">
@@ -456,7 +456,13 @@ export default function InsightsPage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="By room" subtitle="click a bar to filter the page">
+            <Panel
+              title="By room"
+              subtitle={`before discount · sums to ${fmtMoney(
+                data.rooms.reduce((a, r) => a + r.value, 0),
+                currency
+              )}`}
+            >
               <Bars
                 rows={data.rooms}
                 currency={currency}
@@ -490,7 +496,8 @@ export default function InsightsPage() {
             NS Home retail only, online and in the shops — the fabric and commercial catalogue is excluded. Total sales
             is product value after discounts and with shipping, so it matches the rest of the dashboard; every
             per-room, per-category and per-product figure is product value before discount, because Odoo books a
-            discount against no category. Units and revenue are net of anything returned.
+            discount against no category — which is why the room bars sum to less than Total sales, and why the online
+            part of them comes from Odoo rather than Shopify. Units and revenue are net of anything returned.
             Price bands use the unit price (value ÷ units).
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
@@ -668,6 +675,30 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
  * Change over time as columns, not a line: the series is monthly and discrete,
  * and a line would imply readings in between that do not exist.
  */
+/**
+ * The move from the previous column, under the column it lands on. A true
+ * boundary marker would read better, but it cannot be placed reliably between
+ * two flex items that size themselves; anchoring it to the column keeps it
+ * correct at any width. Direction rides the glyph as well as the colour, so it
+ * survives greyscale.
+ */
+function Step({ from, to }: { from?: number; to: number }) {
+  if (from === undefined || from === 0) return <span className="block h-[11px]" />;
+  const pct = ((to - from) / Math.abs(from)) * 100;
+  const up = pct >= 0;
+  return (
+    <span
+      className={`block w-full truncate text-center text-[8px] font-semibold tabular-nums ${
+        up ? "text-emerald-600" : "text-rose-600"
+      }`}
+      title={`${up ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% on the previous column`}
+    >
+      {up ? "\u25b2" : "\u25bc"}
+      {Math.abs(Math.round(pct))}%
+    </span>
+  );
+}
+
 /** 112,942 -> "113k". Short enough to sit above a column without colliding. */
 function compact(n: number): string {
   const v = Math.abs(n);
@@ -706,13 +737,16 @@ function Columns({
   // Heights in pixels: a percentage against a content-sized parent resolves to
   // nothing, which is how this chart first rendered — labels and no bars.
   const PLOT = 150;
-  const CAP = 16; // room for the value sitting above the tallest column
+  const CAP = 34; // headroom for the upright value above the tallest column
   return (
     <div>
       <div className="flex items-end gap-1 overflow-hidden border-b border-[#e7e2dc]" style={{ height: PLOT }}>
-        {points.map((p) => (
+        {points.map((p, i) => (
           <div key={p.label} className="group flex min-w-0 flex-1 flex-col items-center justify-end">
-            <span className="mb-0.5 w-full truncate text-center text-[9px] font-semibold tabular-nums text-gray-500">
+            <span
+              className="mb-1 text-[9px] font-semibold tabular-nums leading-none text-gray-600"
+              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            >
               {compact(p.value)}
             </span>
             <div
@@ -728,13 +762,11 @@ function Columns({
         ))}
       </div>
       <div className="flex gap-1 overflow-hidden">
-        {points.map((p) => (
-          <span
-            key={p.label}
-            className="min-w-0 flex-1 truncate pt-1.5 text-center text-[10px] tabular-nums text-gray-400"
-          >
-            {label(p)}
-          </span>
+        {points.map((p, i) => (
+          <div key={p.label} className="min-w-0 flex-1 pt-1.5 text-center">
+            <div className="truncate text-[10px] tabular-nums text-gray-400">{label(p)}</div>
+            <Step from={points[i - 1]?.value} to={p.value} />
+          </div>
         ))}
       </div>
       <p className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px] text-gray-400">
