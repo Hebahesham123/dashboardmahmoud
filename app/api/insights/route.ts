@@ -206,6 +206,26 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    /**
+     * Sales the way the Summary page counts them: every NS Home line on the
+     * invoice, product plus the discount and shipping lines Odoo books under
+     * the bare category, net of returns. Product lines alone are a
+     * before-discount figure and ran ~12% over Summary — 282,434 against
+     * 251,478 for مدينة نصر. With the discount lines back in, the two agree
+     * to the pound.
+     *
+     * A price-band filter cannot apply to a discount line (it has no unit
+     * price), so when one is set the totals fall back to the product lines in
+     * the band and say so on the page.
+     */
+    const priceFiltered = minPrice !== null || maxPrice !== null;
+    const netOf = (r: { value: number; returned_value: number }) =>
+      Number(r.value || 0) - Number(r.returned_value || 0);
+    const salesOf = (pred: (r: { branch: string }) => boolean) =>
+      priceFiltered
+        ? inBand.filter(pred).reduce((a, r) => a + r.value, 0)
+        : rows.filter(pred).reduce((a, r) => a + netOf(r), 0);
+
     const tally = (list: typeof inBand) => ({
       units: list.reduce((acc, r) => acc + r.qty, 0),
       value: list.reduce((acc, r) => acc + r.value, 0),
@@ -316,7 +336,8 @@ export async function GET(req: NextRequest) {
         gross: inBand.reduce((acc, r) => acc + r.value, 0),
         discounts: discountValue,
         shipping: shippingValue,
-        totalSales: inBand.reduce((acc, r) => acc + r.value, 0) + discountValue + shippingValue,
+        totalSales: salesOf(() => true),
+        priceFiltered,
         products: byProduct.size,
         returnedUnits: inBand.reduce((acc, r) => acc + r.returnedQty, 0),
         returnedValue: inBand.reduce((acc, r) => acc + r.returnedValue, 0),
@@ -354,13 +375,24 @@ export async function GET(req: NextRequest) {
           })(),
         },
       ],
-      // Gross only on these two: a discount line names no branch category.
       channels: [
-        { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))) },
-        { label: "Branches", ...tally(inBand.filter((r) => !isOnline(r.branch))) },
+        {
+          label: "Online",
+          ...tally(inBand.filter((r) => isOnline(r.branch))),
+          value: salesOf((r) => isOnline(r.branch)),
+        },
+        {
+          label: "Branches",
+          ...tally(inBand.filter((r) => !isOnline(r.branch))),
+          value: salesOf((r) => !isOnline(r.branch)),
+        },
       ],
-      branches: [...new Set(productRows.map((r) => r.branch))]
-        .map((b) => ({ label: b, ...tally(inBand.filter((r) => r.branch === b)) }))
+      branches: [...new Set(rows.map((r) => r.branch))]
+        .map((b) => ({
+          label: b,
+          ...tally(inBand.filter((r) => r.branch === b)),
+          value: salesOf((r) => r.branch === b),
+        }))
         .sort((a, b) => b.value - a.value),
       rooms: sum(inBand, (r) => (r.room ?? "Other") as string),
       categories: sum(inBand, (r) => (r.category ?? "—") as string),
