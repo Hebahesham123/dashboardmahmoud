@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
     const minPrice = sp.get("minPrice") ? Number(sp.get("minPrice")) : null;
     const maxPrice = sp.get("maxPrice") ? Number(sp.get("maxPrice")) : null;
     const channel = sp.get("channel"); // "online" | "offline"
+    const branch = sp.get("branch"); // an exact Odoo branch name
 
     // Odoo bills the website as branch "shopify"; everything else is a shop.
     const isOnline = (branch: string) => /shopify|online/i.test(branch ?? "");
@@ -97,9 +98,10 @@ export async function GET(req: NextRequest) {
 
     // Channel is filtered here rather than in the query: room and category are
     // exact matches the database can do, but branch is a pattern.
-    const rows = channel
+    let rows = channel
       ? allRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
       : allRows;
+    if (branch) rows = rows.filter((r) => r.branch === branch);
 
     // Odoo files discounts and shipping with no sub-category, so every
     // per-category view is built from product lines alone. They rejoin below
@@ -225,6 +227,19 @@ export async function GET(req: NextRequest) {
       .map(([label, v]) => ({ label, ...v }))
       .sort((a, b) => a.label.localeCompare(b.label));
 
+    // The same shape by day. A short window wants days; a long one wants
+    // months, and the page picks whichever suits the range it is showing.
+    const byDay = new Map<string, { units: number; value: number }>();
+    for (const r of inBand) {
+      const e = byDay.get(r.day) ?? { units: 0, value: 0 };
+      e.units += r.qty;
+      e.value += r.value;
+      byDay.set(r.day, e);
+    }
+    const daily = [...byDay.entries()]
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
     // The window immediately before this one, same length, for the deltas.
     // On an all-time view "before" is meaningless, so the last 30 days are
     // compared with the 30 before them instead.
@@ -246,9 +261,10 @@ export async function GET(req: NextRequest) {
       // Its own read: with a date filter set, the previous window is outside
       // the rows already fetched.
       const prevRows = await read(`${COLS},kind`, prevFrom, prevTo);
-      const prevScoped = channel
+      let prevScoped = channel
         ? prevRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
         : prevRows;
+      if (branch) prevScoped = prevScoped.filter((r) => r.branch === branch);
       const prevProducts = prevScoped.filter((r) => (r.kind ?? "product") === "product");
       previous = {
         from: prevFrom,
@@ -268,7 +284,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      filters: { from, to, room, category, subcategory, minPrice, maxPrice, channel },
+      filters: { from, to, room, category, subcategory, minPrice, maxPrice, channel, branch },
       coverage: { first: days[0] ?? null, last: days[days.length - 1] ?? null, rows: rows.length },
       totals: {
         units: inBand.reduce((acc, r) => acc + r.qty, 0),
@@ -334,6 +350,7 @@ export async function GET(req: NextRequest) {
       })),
       bands,
       timeseries,
+      daily,
       trend: { current, previous },
       topProducts,
       slowProducts,
@@ -343,6 +360,7 @@ export async function GET(req: NextRequest) {
         rooms: [...new Set(allRows.map((r) => r.room).filter(Boolean))].sort() as string[],
         categories: [...new Set(allRows.map((r) => r.category).filter(Boolean))].sort() as string[],
         subcategories: [...new Set(allRows.map((r) => r.subcategory).filter(Boolean))].sort() as string[],
+        branches: [...new Set(allRows.map((r) => r.branch).filter(Boolean))].sort() as string[],
       },
     });
   } catch (err) {

@@ -54,10 +54,11 @@ interface Resp {
   subcategories: Slice[];
   bands: Band[];
   timeseries: Point[];
+  daily: Point[];
   trend: Trend;
   topProducts: Product[];
   slowProducts: Product[];
-  options: { rooms: string[]; categories: string[]; subcategories: string[] };
+  options: { rooms: string[]; categories: string[]; subcategories: string[]; branches: string[] };
 }
 
 /**
@@ -88,16 +89,49 @@ const ROOM_COLOR: Record<string, string> = {
 };
 const roomHue = (room?: string) => ROOM_COLOR[room ?? "Other"] ?? ROOM_COLOR.Other;
 
+/**
+ * The date shortcuts. "This month" is the default because that is what the
+ * page is usually opened to check; All time is one click away and is what the
+ * coverage line reports.
+ */
+const PRESETS: { label: string; allTime?: boolean; from?: () => string; to?: () => string }[] = [
+  { label: "Today", from: todayStr, to: todayStr },
+  { label: "Yesterday", from: () => daysAgoStr(1), to: () => daysAgoStr(1) },
+  { label: "This month", from: monthStartStr, to: todayStr },
+  { label: "All time", allTime: true },
+];
+
+/** Which shortcut the current dates correspond to, for the active styling. */
+function isPreset(
+  preset: (typeof PRESETS)[number],
+  allTime: boolean,
+  from: string,
+  to: string
+): boolean {
+  if (preset.allTime) return allTime;
+  if (allTime) return false;
+  return preset.from!() === from && preset.to!() === to;
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
+function daysAgoStr(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+function monthStartStr() {
+  return `${todayStr().slice(0, 7)}-01`;
+}
 
 export default function InsightsPage() {
-  // All time by default — "how much have we sold from the beginning" is the
-  // question this page exists to answer; narrowing is opt-in.
-  const [allTime, setAllTime] = useState(true);
-  const [from, setFrom] = useState("2025-01-01");
+  // This month by default: the page is read most often to see how the month is
+  // going. All time is one click away, and it is what the coverage line says.
+  const [allTime, setAllTime] = useState(false);
+  const [from, setFrom] = useState(monthStartStr());
   const [to, setTo] = useState(todayStr());
+  const [branch, setBranch] = useState("");
   const [room, setRoom] = useState("");
   const [subcategory, setSubcategory] = useState("");
   const [channel, setChannel] = useState("");
@@ -114,12 +148,13 @@ export default function InsightsPage() {
       p.set("to", to);
     }
     if (channel) p.set("channel", channel);
+    if (branch) p.set("branch", branch);
     if (room) p.set("room", room);
     if (subcategory) p.set("subcategory", subcategory);
     if (minPrice) p.set("minPrice", minPrice);
     if (maxPrice) p.set("maxPrice", maxPrice);
     return p.toString();
-  }, [allTime, from, to, channel, room, subcategory, minPrice, maxPrice]);
+  }, [allTime, from, to, channel, branch, room, subcategory, minPrice, maxPrice]);
 
   useEffect(() => {
     let alive = true;
@@ -152,9 +187,11 @@ export default function InsightsPage() {
       ? `${data.coverage.first} → ${data.coverage.last}`
       : "all time"
     : `${from} → ${to}`;
-  const activeFilters = [channel && (channel === "online" ? "Online" : "Branches"), room, subcategory]
+  const activeFilters = [channel && (channel === "online" ? "Online" : "Branches"), branch, room, subcategory]
     .filter(Boolean)
     .join(" · ");
+  // Days while the window is short enough to read; months beyond that.
+  const byDay = !allTime && (data?.daily.length ?? 0) > 0 && (data?.daily.length ?? 0) <= 62;
   const prevLabel = data?.trend.previous
     ? `vs ${data.trend.previous.from.slice(5)} → ${data.trend.previous.to.slice(5)}`
     : undefined;
@@ -198,18 +235,27 @@ export default function InsightsPage() {
       <div className="mb-4 rounded-xl border border-[#e7e2dc] bg-white p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex overflow-hidden rounded-lg border border-[#ddd6cd] text-xs font-medium">
-            <button
-              onClick={() => setAllTime(true)}
-              className={`px-3 py-1.5 ${allTime ? "bg-[#6f4423] text-white" : "bg-white text-gray-600 hover:bg-[#faf7f3]"}`}
-            >
-              All time
-            </button>
-            <button
-              onClick={() => setAllTime(false)}
-              className={`px-3 py-1.5 ${!allTime ? "bg-[#6f4423] text-white" : "bg-white text-gray-600 hover:bg-[#faf7f3]"}`}
-            >
-              Date range
-            </button>
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                onClick={() => {
+                  if (preset.allTime) {
+                    setAllTime(true);
+                  } else {
+                    setAllTime(false);
+                    setFrom(preset.from!());
+                    setTo(preset.to!());
+                  }
+                }}
+                className={`px-3 py-1.5 ${
+                  isPreset(preset, allTime, from, to)
+                    ? "bg-[#6f4423] text-white"
+                    : "bg-white text-gray-600 hover:bg-[#faf7f3]"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
           </div>
 
           {!allTime && (
@@ -217,14 +263,20 @@ export default function InsightsPage() {
               <input
                 type="date"
                 value={from}
-                onChange={(e) => setFrom(e.target.value)}
+                onChange={(e) => {
+                  setAllTime(false);
+                  setFrom(e.target.value);
+                }}
                 className="rounded-lg border border-[#ddd6cd] px-2 py-1.5"
               />
               <span className="text-gray-400">→</span>
               <input
                 type="date"
                 value={to}
-                onChange={(e) => setTo(e.target.value)}
+                onChange={(e) => {
+                  setAllTime(false);
+                  setTo(e.target.value);
+                }}
                 className="rounded-lg border border-[#ddd6cd] px-2 py-1.5"
               />
             </div>
@@ -234,6 +286,15 @@ export default function InsightsPage() {
             <option value="">Online + branches</option>
             <option value="online">Online only</option>
             <option value="offline">Branches only</option>
+          </Select>
+
+          <Select value={branch} onChange={setBranch}>
+            <option value="">All branches</option>
+            {(data?.options.branches ?? []).map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
           </Select>
 
           <Select
@@ -279,10 +340,11 @@ export default function InsightsPage() {
             />
           </div>
 
-          {(channel || room || subcategory || minPrice || maxPrice) && (
+          {(channel || branch || room || subcategory || minPrice || maxPrice) && (
             <button
               onClick={() => {
                 setChannel("");
+                setBranch("");
                 setRoom("");
                 setSubcategory("");
                 setMinPrice("");
@@ -339,8 +401,8 @@ export default function InsightsPage() {
               <Donut rows={data.rooms} currency={currency} />
             </Panel>
             <div className="lg:col-span-2">
-              <Panel title="Sales by month" subtitle="EGP">
-                <Columns points={data.timeseries} currency={currency} />
+              <Panel title={byDay ? "Sales by day" : "Sales by month"} subtitle="EGP">
+                <Columns points={byDay ? data.daily : data.timeseries} currency={currency} />
               </Panel>
             </div>
           </div>
