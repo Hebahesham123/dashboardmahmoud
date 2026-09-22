@@ -219,12 +219,42 @@ export async function GET(req: NextRequest) {
      * the band and say so on the page.
      */
     const priceFiltered = minPrice !== null || maxPrice !== null;
+
+    /**
+     * Online sales read from Shopify, the same source and the same date basis
+     * the Summary page uses, so the two agree. Odoo's shopify-branch invoices
+     * describe the same goods on a different clock — an order placed in July
+     * and invoiced in August lands in a different month — which put Insights
+     * 42k above Summary in July and 80k below it in August.
+     *
+     * Shopify carries no product categories, so this can only stand in for the
+     * whole-channel figure. The moment the page is drilled into a room, a
+     * sub-category or a price band, the online number has to come back from
+     * Odoo, which is the only side that knows what a towel is. `onlineSource`
+     * tells the page which it is looking at.
+     */
+    const categoryFiltered = Boolean(room || category || subcategory || priceFiltered);
+    let shopifyOnline = 0;
+    if (!categoryFiltered) {
+      let q = sb.from("daily_metrics").select("day,total_sales");
+      if (from) q = q.gte("day", from);
+      if (to) q = q.lte("day", to);
+      const { data: dm } = await q;
+      shopifyOnline = ((dm ?? []) as { total_sales: number }[]).reduce(
+        (acc, r) => acc + Number(r.total_sales || 0),
+        0
+      );
+    }
+    const onlineSource = categoryFiltered ? "odoo" : "shopify";
     const netOf = (r: { value: number; returned_value: number }) =>
       Number(r.value || 0) - Number(r.returned_value || 0);
     const salesOf = (pred: (r: { branch: string }) => boolean) =>
       priceFiltered
         ? inBand.filter(pred).reduce((a, r) => a + r.value, 0)
         : rows.filter(pred).reduce((a, r) => a + netOf(r), 0);
+
+    const onlineSales = onlineSource === "shopify" ? shopifyOnline : salesOf((r) => isOnline(r.branch));
+    const branchSales = salesOf((r) => !isOnline(r.branch));
 
     const tally = (list: typeof inBand) => ({
       units: list.reduce((acc, r) => acc + r.qty, 0),
@@ -336,8 +366,9 @@ export async function GET(req: NextRequest) {
         gross: inBand.reduce((acc, r) => acc + r.value, 0),
         discounts: discountValue,
         shipping: shippingValue,
-        totalSales: salesOf(() => true),
+        totalSales: onlineSales + branchSales,
         priceFiltered,
+        onlineSource,
         products: byProduct.size,
         returnedUnits: inBand.reduce((acc, r) => acc + r.returnedQty, 0),
         returnedValue: inBand.reduce((acc, r) => acc + r.returnedValue, 0),
@@ -376,22 +407,14 @@ export async function GET(req: NextRequest) {
         },
       ],
       channels: [
-        {
-          label: "Online",
-          ...tally(inBand.filter((r) => isOnline(r.branch))),
-          value: salesOf((r) => isOnline(r.branch)),
-        },
-        {
-          label: "Branches",
-          ...tally(inBand.filter((r) => !isOnline(r.branch))),
-          value: salesOf((r) => !isOnline(r.branch)),
-        },
+        { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))), value: onlineSales },
+        { label: "Branches", ...tally(inBand.filter((r) => !isOnline(r.branch))), value: branchSales },
       ],
       branches: [...new Set(rows.map((r) => r.branch))]
         .map((b) => ({
           label: b,
           ...tally(inBand.filter((r) => r.branch === b)),
-          value: salesOf((r) => r.branch === b),
+          value: isOnline(b) ? onlineSales : salesOf((r) => r.branch === b),
         }))
         .sort((a, b) => b.value - a.value),
       rooms: sum(inBand, (r) => (r.room ?? "Other") as string),
