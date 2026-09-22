@@ -411,12 +411,6 @@ export default function InsightsPage() {
             </div>
           )}
 
-          {data.monthly.length > 1 && (
-            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
-              <Columns points={data.monthly} currency={currency} unit="month" />
-            </Panel>
-          )}
-
           <div className="grid gap-4 lg:grid-cols-3">
             <Panel title="Share by room" subtitle="part of the whole">
               <Donut rows={data.rooms} currency={currency} />
@@ -431,6 +425,12 @@ export default function InsightsPage() {
               </Panel>
             </div>
           </div>
+
+          {data.monthly.length > 1 && (
+            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
+              <Columns points={data.monthly} currency={currency} unit="month" />
+            </Panel>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Where it sells" subtitle="online against the shops, then branch by branch">
@@ -682,19 +682,33 @@ function Donut({ rows, currency }: { rows: Slice[]; currency: string }) {
  * correct at any width. Direction rides the glyph as well as the colour, so it
  * survives greyscale.
  */
-function Step({ from, to }: { from?: number; to: number }) {
-  if (from === undefined || from === 0) return <span className="block h-[11px]" />;
+function Step({ from, to, inside }: { from?: number; to: number; inside?: boolean }) {
+  if (from === undefined || from === 0) return null;
   const pct = ((to - from) / Math.abs(from)) * 100;
   const up = pct >= 0;
+  const text = `${up ? "\u25b2" : "\u25bc"}${Math.abs(Math.round(pct))}%`;
+  const title = `${up ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% on the previous column`;
+  if (inside) {
+    // On the bar, upright, in white — the bar is dark enough to carry it, and
+    // standing it up means a narrow day column cannot clip it.
+    return (
+      <span
+        className="text-[8px] font-semibold tabular-nums leading-none text-white/90"
+        style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        title={title}
+      >
+        {text}
+      </span>
+    );
+  }
   return (
     <span
       className={`block w-full truncate text-center text-[8px] font-semibold tabular-nums ${
         up ? "text-emerald-600" : "text-rose-600"
       }`}
-      title={`${up ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% on the previous column`}
+      title={title}
     >
-      {up ? "\u25b2" : "\u25bc"}
-      {Math.abs(Math.round(pct))}%
+      {text}
     </span>
   );
 }
@@ -738,6 +752,7 @@ function Columns({
   // nothing, which is how this chart first rendered — labels and no bars.
   const PLOT = 150;
   const CAP = 34; // headroom for the upright value above the tallest column
+  const barHeight = (p: Point) => Math.max(2, (Math.abs(p.value) / max) * (PLOT - CAP - 4));
   return (
     <div>
       <div className="flex items-end gap-1 overflow-hidden border-b border-[#e7e2dc]" style={{ height: PLOT }}>
@@ -750,22 +765,25 @@ function Columns({
               {compact(p.value)}
             </span>
             <div
-              className="w-full max-w-[38px] rounded-t-[4px] transition-opacity group-hover:opacity-70"
+              className="flex w-full max-w-[38px] items-center justify-center rounded-t-[4px] transition-opacity group-hover:opacity-70"
               style={{
-                height: Math.max(2, (Math.abs(p.value) / max) * (PLOT - CAP - 4)),
+                height: barHeight(p),
                 backgroundColor: INK,
                 opacity: p.label === peak.label ? 1 : 0.75,
               }}
               title={`${p.label} — ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
-            />
+            >
+              {/* Only when the column is tall enough to hold it without
+                  clipping; the tooltip carries it otherwise. */}
+              {barHeight(p) >= 42 && <Step from={points[i - 1]?.value} to={p.value} inside />}
+            </div>
           </div>
         ))}
       </div>
       <div className="flex gap-1 overflow-hidden">
-        {points.map((p, i) => (
-          <div key={p.label} className="min-w-0 flex-1 pt-1.5 text-center">
-            <div className="truncate text-[10px] tabular-nums text-gray-400">{label(p)}</div>
-            <Step from={points[i - 1]?.value} to={p.value} />
+        {points.map((p) => (
+          <div key={p.label} className="min-w-0 flex-1 truncate pt-1.5 text-center text-[10px] tabular-nums text-gray-400">
+            {label(p)}
           </div>
         ))}
       </div>
