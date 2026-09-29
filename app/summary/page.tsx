@@ -17,6 +17,15 @@ interface SummaryResp {
   // Orders that paid with a voucher, on the day they were placed: how many,
   // how much cashback they spent, and what they came to.
   cashback: { orders: Block; spent: Block; net: Block; purchases: Block };
+  cashbackMtd: { orders: Block; spent: Block; net: Block; purchases: Block };
+  products: {
+    product_id: number;
+    name: string;
+    offline: number;
+    online: number;
+    total: number;
+    value: number;
+  }[];
   meta: {
     from: string;
     to: string;
@@ -130,6 +139,30 @@ export default function SummaryPage() {
   const aovLastMonth: Block = useMemo(() => aovOf(data?.lastMonth), [data]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aovLastMonthMtd: Block = useMemo(() => aovOf(data?.lastMonthMtd), [data]);
+
+  // MTD value with the month's cashback added back — what the month's sales
+  // came to before the vouchers were applied. Both sides cover the same
+  // window; pairing a day's cashback with a month's value would not.
+  const productTotals = useMemo(
+    () => ({
+      offline: (data?.products ?? []).reduce((a, p) => a + p.offline, 0),
+      online: (data?.products ?? []).reduce((a, p) => a + p.online, 0),
+    }),
+    [data]
+  );
+
+  const mtdPlusCashback: Block = useMemo(() => {
+    const out: Block = {};
+    if (data) {
+      for (const c of cols) {
+        const v = data.mtd[c]?.value ?? 0;
+        const cb = data.cashbackMtd?.spent?.[c]?.value ?? 0;
+        out[c] = { orders: 0, value: v + cb };
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   return (
     <div>
@@ -267,6 +300,18 @@ export default function SummaryPage() {
                 tint={TINT.mtd}
               />
 
+              <DataRow
+                label={
+                  <>
+                    MTD Value + Cashback <span className="font-normal opacity-80">gross, before cashback came off</span>
+                  </>
+                }
+                cols={cols}
+                block={mtdPlusCashback}
+                kind="value"
+                tint={TINT.mtd}
+              />
+
               <GroupGap cols={cols} />
 
               {/* Orders that paid with cashback, on the day of purchase. */}
@@ -301,6 +346,58 @@ export default function SummaryPage() {
               />
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* What sold, and where */}
+      {data && data.products.length > 0 && (
+        <div className="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div className="flex items-baseline justify-between gap-3 border-b border-gray-200 px-4 py-3">
+            <h2 className="text-sm font-bold text-gray-900">Products sold · {periodLabel}</h2>
+            <p className="text-[11px] text-gray-400">
+              {fmtNum(data.products.length)} products · {fmtNum(Math.round(productTotals.offline))} in the shops ·{" "}
+              {fmtNum(Math.round(productTotals.online))} online
+            </p>
+          </div>
+          <div className="max-h-[460px] overflow-y-auto">
+            <table className="w-full table-fixed border-collapse text-left text-xs">
+              <colgroup>
+                <col className="w-[46%]" />
+                <col className="w-[13%]" />
+                <col className="w-[13%]" />
+                <col className="w-[12%]" />
+                <col className="w-[16%]" />
+              </colgroup>
+              <thead className="sticky top-0 bg-gray-50">
+                <tr className="text-[10px] uppercase tracking-wider text-gray-500">
+                  <th className="border-b border-gray-200 px-3 py-2 font-semibold">Product</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Offline</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Online</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Total</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.products.map((p) => (
+                  <tr key={p.product_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                    <td className="truncate px-3 py-1.5 text-gray-800" title={p.name}>
+                      {p.name}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
+                      {p.offline ? fmtNum(Math.round(p.offline)) : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
+                      {p.online ? fmtNum(Math.round(p.online)) : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900">
+                      {fmtNum(Math.round(p.total))}
+                    </td>
+                    <td className="truncate px-3 py-1.5 text-right tabular-nums text-gray-600">{money(p.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

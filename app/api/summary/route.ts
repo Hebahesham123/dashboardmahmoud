@@ -265,14 +265,63 @@ export async function GET(req: NextRequest) {
       };
     };
 
+    // --- What actually sold, by product, split between the shops and the
+    // website. Reads product_sales (the Insights table); a missing table just
+    // yields an empty list rather than failing the page. ---
+    const productRows = await pageAll<{
+      branch: string;
+      product_name: string | null;
+      product_id: number;
+      qty: number;
+      returned_qty: number;
+      value: number;
+      returned_value: number;
+      kind: string;
+    }>(() =>
+      sb
+        .from("product_sales")
+        .select("branch,product_name,product_id,qty,returned_qty,value,returned_value,kind")
+        .gte("day", from)
+        .lte("day", to)
+    );
+    const isWeb = (b: string) => /shopify|online/i.test(b ?? "");
+    const productMap = new Map<
+      number,
+      { name: string; offline: number; online: number; value: number }
+    >();
+    for (const r of productRows) {
+      if ((r.kind ?? "product") !== "product") continue; // discounts have no piece count
+      const qty = Number(r.qty || 0) - Number(r.returned_qty || 0);
+      const val = Number(r.value || 0) - Number(r.returned_value || 0);
+      const e = productMap.get(r.product_id) ?? {
+        name: r.product_name ?? String(r.product_id),
+        offline: 0,
+        online: 0,
+        value: 0,
+      };
+      if (isWeb(r.branch)) e.online += qty;
+      else e.offline += qty;
+      e.value += val;
+      productMap.set(r.product_id, e);
+    }
+    const products = [...productMap.entries()]
+      .map(([product_id, v]) => ({ product_id, ...v, total: v.offline + v.online }))
+      .filter((p) => p.total !== 0)
+      .sort((a, b) => b.total - a.total);
+
     return NextResponse.json({
       ok: true,
       channels,
+      products,
       period: periodAgg(from, to),
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
       cashback: cashbackAgg(from, to),
+      // The month's cashback, so "MTD Value + Cashback" adds two figures that
+      // cover the same window. Adding one day's cashback to a month's value
+      // would be comparing a day with a month.
+      cashbackMtd: cashbackAgg(monthStart, to),
       meta: {
         from,
         to,
