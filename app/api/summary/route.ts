@@ -292,9 +292,24 @@ export async function GET(req: NextRequest) {
     // pieces there against the 28 Shopify actually sold, and 15 of a towel
     // that appears nowhere in that day's orders. Counting the orders
     // themselves is both right and checkable against Shopify.
-    const orderItems = await pageAll<{ title: string | null; quantity: number; price: number }>(() =>
-      sb.from("order_items").select("title,quantity,price").gte("order_date", from).lte("order_date", to)
+    // Cancelled orders sold nothing. The rest of the dashboard counts every
+    // order on purpose (a cancellation is still demand), but "products sold"
+    // is a count of goods that left the building: 28 Sep had 8 orders and 28
+    // pieces, of which a voided order and a cancelled draft account for 4 —
+    // leaving the 6 orders and 24 pieces Shopify reports.
+    const orderRows = await pageAll<{ id: number; cancelled_at: string | null }>(() =>
+      sb.from("orders").select("id,cancelled_at").gte("order_date", from).lte("order_date", to)
     );
+    const cancelled = new Set(orderRows.filter((o) => o.cancelled_at).map((o) => o.id));
+    const orderItems = (
+      await pageAll<{ title: string | null; quantity: number; price: number; order_id: number }>(() =>
+        sb
+          .from("order_items")
+          .select("title,quantity,price,order_id")
+          .gte("order_date", from)
+          .lte("order_date", to)
+      )
+    ).filter((r) => !cancelled.has(r.order_id));
     // Keyed on the NAME, not the id: Odoo carries a separate product per
     // colour and size, so keying on the id listed "Waffle Towel 50*100 450
     // GSM" three times over and it read like a duplicate. One line per thing
