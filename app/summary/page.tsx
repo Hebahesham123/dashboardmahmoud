@@ -300,18 +300,6 @@ export default function SummaryPage() {
                 tint={TINT.mtd}
               />
 
-              <DataRow
-                label={
-                  <>
-                    MTD Value + Cashback <span className="font-normal opacity-80">gross, before cashback came off</span>
-                  </>
-                }
-                cols={cols}
-                block={mtdPlusCashback}
-                kind="value"
-                tint={TINT.mtd}
-              />
-
               <GroupGap cols={cols} />
 
               {/* Orders that paid with cashback, on the day of purchase. */}
@@ -343,6 +331,18 @@ export default function SummaryPage() {
                 block={data.cashback.purchases}
                 kind="value"
                 tint={TINT.cashback}
+              />
+
+              <GroupGap cols={cols} />
+
+              {/* On its own below the cashback block: the month's takings with
+                  the vouchers spent on them added back. */}
+              <DataRow
+                label="MTD Value + Cashback"
+                cols={cols}
+                block={mtdPlusCashback}
+                kind="value"
+                tint={TINT.mtd}
               />
             </tbody>
           </table>
@@ -407,6 +407,10 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> MTD above {lastMonthMtdLabel}</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
+          <span>
+            · MTD Value + Cashback is the month&apos;s takings with the cashback spent on them added back — gross,
+            before the vouchers came off. It pairs the month with the month&apos;s cashback, not the picked day&apos;s.
+          </span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how
             much cashback they spent, what was left to pay, and what they came to before any discount. Branch columns are shop redemptions,
