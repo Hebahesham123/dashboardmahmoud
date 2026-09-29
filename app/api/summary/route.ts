@@ -285,6 +285,16 @@ export async function GET(req: NextRequest) {
         .lte("day", to)
     );
     const isWeb = (b: string) => /shopify|online/i.test(b ?? "");
+
+    // Online pieces come from the Shopify order lines, not from Odoo's copy of
+    // them. Odoo invoices a website order whenever it gets to it, so its
+    // shopify branch on a given day is a batch of older orders: 28 Sep read 58
+    // pieces there against the 28 Shopify actually sold, and 15 of a towel
+    // that appears nowhere in that day's orders. Counting the orders
+    // themselves is both right and checkable against Shopify.
+    const orderItems = await pageAll<{ title: string | null; quantity: number; price: number }>(() =>
+      sb.from("order_items").select("title,quantity,price").gte("order_date", from).lte("order_date", to)
+    );
     // Keyed on the NAME, not the id: Odoo carries a separate product per
     // colour and size, so keying on the id listed "Waffle Towel 50*100 450
     // GSM" three times over and it read like a duplicate. One line per thing
@@ -293,21 +303,28 @@ export async function GET(req: NextRequest) {
       string,
       { name: string; offline: number; online: number; value: number; ids: Set<number> }
     >();
+    const bump = (name: string) => {
+      const key = name.trim();
+      const e = productMap.get(key) ?? { name: key, offline: 0, online: 0, value: 0, ids: new Set<number>() };
+      productMap.set(key, e);
+      return e;
+    };
     for (const r of productRows) {
       if ((r.kind ?? "product") !== "product") continue; // discounts have no piece count
-      const qty = Number(r.qty || 0) - Number(r.returned_qty || 0);
-      const val = Number(r.value || 0) - Number(r.returned_value || 0);
-      const name = (r.product_name ?? String(r.product_id)).trim();
-      const e = productMap.get(name) ?? { name, offline: 0, online: 0, value: 0, ids: new Set<number>() };
+      if (isWeb(r.branch)) continue; // the website is counted from Shopify below
+      const e = bump(r.product_name ?? String(r.product_id));
       e.ids.add(r.product_id);
-      if (isWeb(r.branch)) e.online += qty;
-      else e.offline += qty;
-      e.value += val;
-      productMap.set(name, e);
+      e.offline += Number(r.qty || 0) - Number(r.returned_qty || 0);
+      e.value += Number(r.value || 0) - Number(r.returned_value || 0);
+    }
+    for (const r of orderItems) {
+      const e = bump(r.title ?? "—");
+      e.online += Number(r.quantity || 0);
+      e.value += Number(r.quantity || 0) * Number(r.price || 0);
     }
     const products = [...productMap.values()]
       .map((v) => ({
-        product_id: [...v.ids][0],
+        product_id: [...v.ids][0] ?? 0,
         name: v.name,
         offline: v.offline,
         online: v.online,
