@@ -25,6 +25,7 @@ interface SummaryResp {
     online: number;
     total: number;
     value: number;
+    variants: number;
   }[];
   meta: {
     from: string;
@@ -140,9 +141,10 @@ export default function SummaryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aovLastMonthMtd: Block = useMemo(() => aovOf(data?.lastMonthMtd), [data]);
 
-  // MTD value with the month's cashback added back — what the month's sales
-  // came to before the vouchers were applied. Both sides cover the same
-  // window; pairing a day's cashback with a month's value would not.
+  // MTD Value plus the Cashback Used row exactly as it appears above, so the
+  // sum can be checked against the table. It used the whole month's cashback
+  // before, which made the row impossible to verify: on a day with no
+  // redemptions the table showed 0 while the row still added 144,411.
   const productTotals = useMemo(
     () => ({
       offline: (data?.products ?? []).reduce((a, p) => a + p.offline, 0),
@@ -156,7 +158,7 @@ export default function SummaryPage() {
     if (data) {
       for (const c of cols) {
         const v = data.mtd[c]?.value ?? 0;
-        const cb = data.cashbackMtd?.spent?.[c]?.value ?? 0;
+        const cb = data.cashback?.spent?.[c]?.value ?? 0;
         out[c] = { orders: 0, value: v + cb };
       }
     }
@@ -338,7 +340,7 @@ export default function SummaryPage() {
               {/* On its own below the cashback block: the month's takings with
                   the vouchers spent on them added back. */}
               <DataRow
-                label="MTD Value + Cashback"
+                label="MTD Value + Cashback Used"
                 cols={cols}
                 block={mtdPlusCashback}
                 kind="value"
@@ -382,6 +384,9 @@ export default function SummaryPage() {
                   <tr key={p.product_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                     <td className="truncate px-3 py-1.5 text-gray-800" title={p.name}>
                       {p.name}
+                      {p.variants > 1 && (
+                        <span className="ml-1.5 text-[10px] text-gray-400">{p.variants} variants</span>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
                       {p.offline ? fmtNum(Math.round(p.offline)) : <span className="text-gray-300">—</span>}
@@ -408,8 +413,9 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · MTD Value + Cashback is the month&apos;s takings with the cashback spent on them added back — gross,
-            before the vouchers came off. It pairs the month with the month&apos;s cashback, not the picked day&apos;s.
+            · MTD Value + Cashback Used adds the two rows exactly as they appear above, so it can be checked against
+            the table. The cashback row follows the picked day or range, so on a day with no redemptions this equals
+            MTD Value; pick the whole month to read the month&apos;s gross.
           </span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how

@@ -285,27 +285,36 @@ export async function GET(req: NextRequest) {
         .lte("day", to)
     );
     const isWeb = (b: string) => /shopify|online/i.test(b ?? "");
+    // Keyed on the NAME, not the id: Odoo carries a separate product per
+    // colour and size, so keying on the id listed "Waffle Towel 50*100 450
+    // GSM" three times over and it read like a duplicate. One line per thing
+    // you would call a product.
     const productMap = new Map<
-      number,
-      { name: string; offline: number; online: number; value: number }
+      string,
+      { name: string; offline: number; online: number; value: number; ids: Set<number> }
     >();
     for (const r of productRows) {
       if ((r.kind ?? "product") !== "product") continue; // discounts have no piece count
       const qty = Number(r.qty || 0) - Number(r.returned_qty || 0);
       const val = Number(r.value || 0) - Number(r.returned_value || 0);
-      const e = productMap.get(r.product_id) ?? {
-        name: r.product_name ?? String(r.product_id),
-        offline: 0,
-        online: 0,
-        value: 0,
-      };
+      const name = (r.product_name ?? String(r.product_id)).trim();
+      const e = productMap.get(name) ?? { name, offline: 0, online: 0, value: 0, ids: new Set<number>() };
+      e.ids.add(r.product_id);
       if (isWeb(r.branch)) e.online += qty;
       else e.offline += qty;
       e.value += val;
-      productMap.set(r.product_id, e);
+      productMap.set(name, e);
     }
-    const products = [...productMap.entries()]
-      .map(([product_id, v]) => ({ product_id, ...v, total: v.offline + v.online }))
+    const products = [...productMap.values()]
+      .map((v) => ({
+        product_id: [...v.ids][0],
+        name: v.name,
+        offline: v.offline,
+        online: v.online,
+        value: v.value,
+        variants: v.ids.size,
+        total: v.offline + v.online,
+      }))
       .filter((p) => p.total !== 0)
       .sort((a, b) => b.total - a.total);
 
