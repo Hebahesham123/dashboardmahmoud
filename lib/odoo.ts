@@ -494,3 +494,14 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
   }
   return [...map.values()];
 }
+
+/**
+ * Shopify carries the same taxonomy on a product's type, minus the prefix:
+ * "Bathroom Textile/Towels" against Odoo's "NS Home / Bathroom Textile/Towels".
+ * Putting the prefix back lets one parser serve both.
+ */
+export function parseShopifyType(productType: string | null | undefined): ProductCategory | null {
+  const t = (productType ?? "").trim();
+  if (!t) return null;
+  return parseCategory(NS_PREFIX.test(t) ? t : `NS Home / ${t}`);
+}

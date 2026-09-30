@@ -473,3 +473,61 @@ export function toItemRows(o: ShopifyOrder) {
     source_name: o.source_name,
   }));
 }
+
+export interface StockProduct {
+  product_id: number;
+  title: string;
+  product_type: string;
+  stock: number;
+  variants: number;
+  price: number;
+  status: string;
+}
+
+/**
+ * Every ACTIVE product with its stock, summed over the variants.
+ *
+ * Drafts are excluded deliberately: the store carries ~6,700 of them against
+ * ~430 live products, nearly all of the fabric/commercial catalogue, and they
+ * would bury the retail lines the Stock page is about.
+ */
+export async function fetchStockProducts(): Promise<StockProduct[]> {
+  const { token, base } = shopifyConfig();
+  let url: string | null =
+    `${base}/products.json?limit=250&status=active&fields=id,title,product_type,status,variants`;
+  const out: StockProduct[] = [];
+
+  for (let guard = 0; guard < 100 && url; guard++) {
+    const res: Response = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Shopify products ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const j = (await res.json()) as {
+      products: {
+        id: number;
+        title: string;
+        product_type: string | null;
+        status: string;
+        variants: { price: string; inventory_quantity?: number }[];
+      }[];
+    };
+    for (const p of j.products ?? []) {
+      const variants = p.variants ?? [];
+      const prices = variants.map((v) => Number(v.price || 0)).filter((n) => n > 0);
+      out.push({
+        product_id: p.id,
+        title: (p.title ?? "").trim(),
+        product_type: (p.product_type ?? "").trim(),
+        // Shopify allows a negative count when it has oversold; as a holding
+        // figure that is zero, not a debt.
+        stock: variants.reduce((a, v) => a + Math.max(0, v.inventory_quantity ?? 0), 0),
+        variants: variants.length,
+        price: prices.length ? Math.min(...prices) : 0,
+        status: p.status,
+      });
+    }
+    url = parseNextLink(res.headers.get("link"));
+  }
+  return out;
+}

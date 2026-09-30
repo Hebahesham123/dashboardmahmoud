@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { href: "/daily", label: "Daily Report", icon: "📅" },
   { href: "/offline", label: "Offline (Odoo)", icon: "🏬" },
   { href: "/products", label: "Products", icon: "🛍️" },
+  { href: "/stock", label: "Stock", icon: "📦" },
   { href: "/abandoned", label: "Abandoned Carts", icon: "🛒" },
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
@@ -42,6 +43,7 @@ const CC_NAV: NavItem[] = [
 const OWN_FILTER: Record<string, string> = {
   "/summary": "Summary",
   "/insights": "Insights",
+  "/stock": "Stock",
 };
 
 // Routes a call-center user may open (anything else → /abandoned).
@@ -121,6 +123,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       // Product sales for Insights. Without this the page freezes at whatever
       // the last manual backfill covered — today's sales never appear.
       await fetch("/api/sync-products?days=3", { headers: { "x-ui-sync": "1" } });
+      // Stock is a snapshot of the live Shopify catalogue — ~430 active
+      // products, two pages, so it is cheap to refresh on the same tick.
+      await fetch("/api/sync-stock", { headers: { "x-ui-sync": "1" } });
       await reload();
     } catch {
       /* ignore — offline sync is best-effort */
