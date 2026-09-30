@@ -377,20 +377,18 @@ export async function GET(req: NextRequest) {
     const shown = [...productMap.values()].filter(
       (v) => v.offline + v.online !== 0 || v.returned !== 0
     );
-    const rawOnline = shown.reduce((a, v) => a + v.onlineValue, 0);
-    const rawOffline = shown.reduce((a, v) => a + v.offlineValue, 0);
-    const webTarget = period[WEBSITE]?.value ?? 0;
-    const branchTarget = (period.Total?.value ?? 0) - webTarget;
-    // `!== 0`, not `> 0`: a day of returns with no sales has a negative raw
-    // total, and a positive-only guard left it unscaled — 29 Sep showed
-    // -18,622 against the -15,829 in the table.
-    const onlineScale = rawOnline !== 0 ? webTarget / rawOnline : 1;
-    const offlineScale = rawOffline !== 0 ? branchTarget / rawOffline : 1;
+    // Straight arithmetic: an item at 1,000 with four sold reads 4,000. These
+    // are the line values as billed, so price x quantity holds on every row
+    // and a column adds up by hand.
+    //
+    // The consequence is named in the header rather than hidden: this is the
+    // list-price total, and the table above is after the order-level
+    // discounts that belong to no single line.
 
     const products = shown
       .map((v) => {
-        const offlineValue = v.offlineValue * offlineScale;
-        const onlineValue = v.onlineValue * onlineScale;
+        const offlineValue = v.offlineValue;
+        const onlineValue = v.onlineValue;
         const pieces = v.offline + v.online;
         // Odoo's price comes from value/qty while Shopify carries it exactly,
         // so the same item lands as 349 on one side and 350 on the other. A
@@ -425,6 +423,9 @@ export async function GET(req: NextRequest) {
       ok: true,
       channels,
       products,
+      // What the table above reports for the same window: list price here,
+      // net there, the gap being the order-level discounts.
+      productsNet: period.Total?.value ?? 0,
       period,
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
