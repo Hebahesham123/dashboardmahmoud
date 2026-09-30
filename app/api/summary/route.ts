@@ -384,6 +384,7 @@ export async function GET(req: NextRequest) {
       .map((v) => {
         const offlineValue = v.offlineValue * offlineScale;
         const onlineValue = v.onlineValue * onlineScale;
+        const pieces = v.offline + v.online;
         return {
           product_id: [...v.ids][0] ?? 0,
           name: v.name,
@@ -393,8 +394,12 @@ export async function GET(req: NextRequest) {
           offlineValue,
           onlineValue,
           value: offlineValue + onlineValue,
+          // What one costs, off the unscaled line prices — the ticket price,
+          // not the apportioned share. Averaged across channels and variants
+          // when they differ, which is why a size range shows a blend.
+          unitPrice: pieces > 0 ? (v.offlineValue + v.onlineValue) / pieces : 0,
           variants: v.ids.size,
-          total: v.offline + v.online,
+          total: pieces,
         };
       })
       .sort((a, b) => b.value - a.value);

@@ -28,6 +28,7 @@ interface SummaryResp {
     offlineValue: number;
     onlineValue: number;
     value: number;
+    unitPrice: number;
     variants: number;
   }[];
   meta: {
@@ -374,14 +375,15 @@ export default function SummaryPage() {
               {/* Widths must total 100%: at 90% the browser handed the
                   remainder to a phantom column on the right. */}
               <colgroup>
-                <col className="w-[28%]" />
+                <col className="w-[25%]" />
                 <col className="w-[9%]" />
-                <col className="w-[12%]" />
-                <col className="w-[9%]" />
-                <col className="w-[12%]" />
-                <col className="w-[9%]" />
-                <col className="w-[13%]" />
                 <col className="w-[8%]" />
+                <col className="w-[11%]" />
+                <col className="w-[8%]" />
+                <col className="w-[11%]" />
+                <col className="w-[8%]" />
+                <col className="w-[13%]" />
+                <col className="w-[7%]" />
               </colgroup>
               <thead className="sticky top-0 z-10 bg-gray-50">
                 {/* Two header rows: the channel, then what each number is. One
@@ -389,6 +391,12 @@ export default function SummaryPage() {
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
                   <th rowSpan={2} className="border-b border-gray-200 px-3 py-2 align-bottom font-semibold">
                     Product
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="border-b border-l border-gray-200 px-2 py-2 text-right align-bottom font-semibold"
+                  >
+                    Price
                   </th>
                   <th colSpan={2} className="border-b border-l border-gray-200 px-3 pt-2 text-center font-semibold">
                     In the shops
@@ -421,6 +429,9 @@ export default function SummaryPage() {
                         <span className="ml-1.5 text-[10px] text-gray-400">{p.variants} variants</span>
                       )}
                     </td>
+                    <td className="border-l border-gray-100 px-2 py-2 text-right tabular-nums text-gray-500">
+                      {p.unitPrice ? fmtNum(Math.round(p.unitPrice)) : <span className="text-gray-300">—</span>}
+                    </td>
                     <Qty n={p.offline} bordered />
                     <Money n={p.offlineValue} />
                     <Qty n={p.online} bordered />
@@ -436,6 +447,7 @@ export default function SummaryPage() {
               <tfoot className="sticky bottom-0 bg-[#f6f2ed]">
                 <tr className="border-t-2 border-[#d8c3aa] font-semibold text-gray-900">
                   <td className="px-3 py-2">Total</td>
+                  <td className="border-l border-gray-200 px-2 py-2 text-right tabular-nums text-gray-400">—</td>
                   <Qty n={productTotals.offline} bordered strong />
                   <Money n={productTotals.offlineValue} strong />
                   <Qty n={productTotals.online} bordered strong />
