@@ -25,6 +25,8 @@ interface SummaryResp {
     online: number;
     total: number;
     returned: number;
+    offlineValue: number;
+    onlineValue: number;
     value: number;
     variants: number;
   }[];
@@ -151,6 +153,9 @@ export default function SummaryPage() {
       offline: (data?.products ?? []).reduce((a, p) => a + p.offline, 0),
       online: (data?.products ?? []).reduce((a, p) => a + p.online, 0),
       returned: (data?.products ?? []).reduce((a, p) => a + p.returned, 0),
+      offlineValue: (data?.products ?? []).reduce((a, p) => a + p.offlineValue, 0),
+      onlineValue: (data?.products ?? []).reduce((a, p) => a + p.onlineValue, 0),
+      value: (data?.products ?? []).reduce((a, p) => a + p.value, 0),
     }),
     [data]
   );
@@ -367,12 +372,11 @@ export default function SummaryPage() {
           <div className="max-h-[460px] overflow-y-auto">
             <table className="w-full table-fixed border-collapse text-left text-xs">
               <colgroup>
-                <col className="w-[40%]" />
-                <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[11%]" />
-                <col className="w-[11%]" />
-                <col className="w-[14%]" />
+                <col className="w-[34%]" />
+                <col className="w-[15%]" />
+                <col className="w-[15%]" />
+                <col className="w-[16%]" />
+                <col className="w-[10%]" />
               </colgroup>
               <thead className="sticky top-0 bg-gray-50">
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -381,34 +385,37 @@ export default function SummaryPage() {
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Online</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Total</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Returned</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Value</th>
                 </tr>
               </thead>
               <tbody>
                 {data.products.map((p) => (
-                  <tr key={p.product_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                  <tr key={p.name} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                     <td className="truncate px-3 py-1.5 text-gray-800" title={p.name}>
                       {p.name}
                       {p.variants > 1 && (
                         <span className="ml-1.5 text-[10px] text-gray-400">{p.variants} variants</span>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
-                      {p.offline ? fmtNum(Math.round(p.offline)) : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
-                      {p.online ? fmtNum(Math.round(p.online)) : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900">
-                      {fmtNum(Math.round(p.total))}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-rose-600">
+                    <QtyValue qty={p.offline} value={p.offlineValue} />
+                    <QtyValue qty={p.online} value={p.onlineValue} />
+                    <QtyValue qty={p.total} value={p.value} strong />
+                    <td className="px-3 py-1.5 text-right align-top tabular-nums text-rose-600">
                       {p.returned ? fmtNum(Math.round(p.returned)) : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="truncate px-3 py-1.5 text-right tabular-nums text-gray-600">{money(p.value)}</td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="sticky bottom-0 bg-[#f6f2ed]">
+                <tr className="font-semibold text-gray-900">
+                  <td className="border-t border-gray-300 px-3 py-2">Total</td>
+                  <QtyValue qty={productTotals.offline} value={productTotals.offlineValue} strong border />
+                  <QtyValue qty={productTotals.online} value={productTotals.onlineValue} strong border />
+                  <QtyValue qty={productTotals.offline + productTotals.online} value={productTotals.value} strong border />
+                  <td className="border-t border-gray-300 px-3 py-2 text-right tabular-nums text-rose-600">
+                    {productTotals.returned ? fmtNum(Math.round(productTotals.returned)) : "—"}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
@@ -546,5 +553,32 @@ function GroupGap({ cols }: { cols: string[] }) {
     <tr aria-hidden="true">
       <td colSpan={cols.length + 1} className="h-2.5 border-0 bg-white p-0" />
     </tr>
+  );
+}
+
+/** Pieces above, what they came to below — one cell, two facts. */
+function QtyValue({
+  qty,
+  value,
+  strong,
+  border,
+}: {
+  qty: number;
+  value: number;
+  strong?: boolean;
+  border?: boolean;
+}) {
+  const none = !qty && !value;
+  return (
+    <td className={`px-3 py-1.5 text-right align-top tabular-nums ${border ? "border-t border-gray-300" : ""}`}>
+      {none ? (
+        <span className="text-gray-300">—</span>
+      ) : (
+        <>
+          <div className={strong ? "font-semibold text-gray-900" : "text-gray-700"}>{fmtNum(Math.round(qty))}</div>
+          <div className="text-[10px] text-gray-400">{fmtNum(Math.round(value))}</div>
+        </>
+      )}
+    </td>
   );
 }

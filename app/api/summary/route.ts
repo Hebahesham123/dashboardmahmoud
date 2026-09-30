@@ -316,7 +316,15 @@ export async function GET(req: NextRequest) {
     // you would call a product.
     const productMap = new Map<
       string,
-      { name: string; offline: number; online: number; returned: number; value: number; ids: Set<number> }
+      {
+        name: string;
+        offline: number;
+        online: number;
+        returned: number;
+        offlineValue: number;
+        onlineValue: number;
+        ids: Set<number>;
+      }
     >();
     const bump = (name: string) => {
       const key = name.trim();
@@ -325,7 +333,8 @@ export async function GET(req: NextRequest) {
         offline: 0,
         online: 0,
         returned: 0,
-        value: 0,
+        offlineValue: 0,
+        onlineValue: 0,
         ids: new Set<number>(),
       };
       productMap.set(key, e);
@@ -341,32 +350,60 @@ export async function GET(req: NextRequest) {
       // happen to a count of goods sold.
       e.offline += Number(r.qty || 0);
       e.returned += Number(r.returned_qty || 0);
-      e.value += Number(r.value || 0) - Number(r.returned_value || 0);
+      e.offlineValue += Number(r.value || 0) - Number(r.returned_value || 0);
     }
     for (const r of orderItems) {
       const e = bump(r.title ?? "—");
       e.online += Number(r.quantity || 0);
-      e.value += Number(r.quantity || 0) * Number(r.price || 0);
+      e.onlineValue += Number(r.quantity || 0) * Number(r.price || 0);
     }
-    const products = [...productMap.values()]
-      .map((v) => ({
-        product_id: [...v.ids][0] ?? 0,
-        name: v.name,
-        offline: v.offline,
-        online: v.online,
-        returned: v.returned,
-        value: v.value,
-        variants: v.ids.size,
-        total: v.offline + v.online,
-      }))
-      .filter((p) => p.total !== 0 || p.returned !== 0)
-      .sort((a, b) => b.total - a.total);
+    // A line price is not the whole story of what a sale was worth: the order
+    // carries a discount and shipping that belong to no single line, and the
+    // shop figures come from Odoo's product lines while the table's branch
+    // columns include its discount lines. So each side is scaled to the
+    // channel total already shown in the table above, and the column totals
+    // tie out to it rather than landing somewhere near it.
+    const period = periodAgg(from, to);
+    // Scale over exactly the rows that will be shown. Measuring the raw totals
+    // across every map entry and then dropping some left the column totals
+    // short of their target — 29 Sep landed on -18,622 against -15,829.
+    const shown = [...productMap.values()].filter(
+      (v) => v.offline + v.online !== 0 || v.returned !== 0
+    );
+    const rawOnline = shown.reduce((a, v) => a + v.onlineValue, 0);
+    const rawOffline = shown.reduce((a, v) => a + v.offlineValue, 0);
+    const webTarget = period[WEBSITE]?.value ?? 0;
+    const branchTarget = (period.Total?.value ?? 0) - webTarget;
+    // `!== 0`, not `> 0`: a day of returns with no sales has a negative raw
+    // total, and a positive-only guard left it unscaled — 29 Sep showed
+    // -18,622 against the -15,829 in the table.
+    const onlineScale = rawOnline !== 0 ? webTarget / rawOnline : 1;
+    const offlineScale = rawOffline !== 0 ? branchTarget / rawOffline : 1;
+
+    const products = shown
+      .map((v) => {
+        const offlineValue = v.offlineValue * offlineScale;
+        const onlineValue = v.onlineValue * onlineScale;
+        return {
+          product_id: [...v.ids][0] ?? 0,
+          name: v.name,
+          offline: v.offline,
+          online: v.online,
+          returned: v.returned,
+          offlineValue,
+          onlineValue,
+          value: offlineValue + onlineValue,
+          variants: v.ids.size,
+          total: v.offline + v.online,
+        };
+      })
+      .sort((a, b) => b.value - a.value);
 
     return NextResponse.json({
       ok: true,
       channels,
       products,
-      period: periodAgg(from, to),
+      period,
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
       lastMonthMtd: periodAgg(lmStart, lmMtdEnd), // last month to the same day
