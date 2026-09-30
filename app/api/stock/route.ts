@@ -22,6 +22,7 @@ interface StockRow {
   stock: number;
   variants: number;
   price: number;
+  status: string | null;
 }
 interface SoldRow {
   branch: string;
@@ -30,6 +31,8 @@ interface SoldRow {
   room: string | null;
   qty: number;
   returned_qty: number;
+  value: number;
+  returned_value: number;
   kind: string;
 }
 
@@ -68,7 +71,7 @@ export async function GET(req: NextRequest) {
     const stock = await pageAll<StockRow>(() => {
       let q = sb
         .from("stock_levels")
-        .select("product_id,title,product_type,room,category,subcategory,stock,variants,price");
+        .select("product_id,title,product_type,room,category,subcategory,stock,variants,price,status");
       if (room) q = q.eq("room", room);
       return q as unknown as {
         range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
@@ -80,21 +83,28 @@ export async function GET(req: NextRequest) {
     const sold = await pageAll<SoldRow>(() =>
       sb
         .from("product_sales")
-        .select("branch,product_name,subcategory,room,qty,returned_qty,kind")
+        .select("branch,product_name,subcategory,room,qty,returned_qty,value,returned_value,kind")
         .gte("day", from)
         .lte("day", to)
     );
     const isWeb = (b: string) => /shopify|online/i.test(b ?? "");
     const soldOnline = sold.filter((r) => isWeb(r.branch) && (r.kind ?? "product") === "product");
 
-    const soldBySub = new Map<string, number>();
-    const soldByProduct = new Map<string, number>();
+    // Everything that went out, returns and refunds included — the question is
+    // how many left the shelf, and a piece that came back still did.
+    const soldBySub = new Map<string, { qty: number; value: number; returned: number }>();
+    const soldByProduct = new Map<string, { qty: number; value: number; returned: number }>();
+    const add = (m: Map<string, { qty: number; value: number; returned: number }>, k: string, r: SoldRow) => {
+      const e = m.get(k) ?? { qty: 0, value: 0, returned: 0 };
+      e.qty += Number(r.qty || 0);
+      e.value += Number(r.value || 0);
+      e.returned += Number(r.returned_qty || 0);
+      m.set(k, e);
+    };
     for (const r of soldOnline) {
-      const qty = Number(r.qty || 0) - Number(r.returned_qty || 0);
-      const sub = (r.subcategory ?? "—").trim();
-      soldBySub.set(sub, (soldBySub.get(sub) ?? 0) + qty);
+      add(soldBySub, (r.subcategory ?? "—").trim(), r);
       const name = (r.product_name ?? "").trim();
-      if (name) soldByProduct.set(name, (soldByProduct.get(name) ?? 0) + qty);
+      if (name) add(soldByProduct, name, r);
     }
 
     // One line per type: what is held against what went.
@@ -121,10 +131,13 @@ export async function GET(req: NextRequest) {
 
     const types = [...byType.values()]
       .map((t) => {
+        const sold = soldBySub.get(t.subcategory);
         return {
           ...t,
           label: `${t.category} / ${t.subcategory}`,
-          sold: soldBySub.get(t.subcategory) ?? 0,
+          sold: sold?.qty ?? 0,
+          soldValue: sold?.value ?? 0,
+          returned: sold?.returned ?? 0,
         };
       })
       .sort((a, b) => b.stock - a.stock);
@@ -134,6 +147,7 @@ export async function GET(req: NextRequest) {
       products: types.filter((t) => t.room === r).reduce((a, t) => a + t.products, 0),
       stock: types.filter((t) => t.room === r).reduce((a, t) => a + t.stock, 0),
       sold: types.filter((t) => t.room === r).reduce((a, t) => a + t.sold, 0),
+      soldValue: types.filter((t) => t.room === r).reduce((a, t) => a + t.soldValue, 0),
       value: types.filter((t) => t.room === r).reduce((a, t) => a + t.value, 0),
     }));
     rooms.sort((a, b) => b.stock - a.stock);
@@ -147,7 +161,10 @@ export async function GET(req: NextRequest) {
         stock: Number(s.stock || 0),
         variants: s.variants,
         price: Number(s.price || 0),
-        sold: soldByProduct.get((s.title ?? "").trim()) ?? 0,
+        sold: soldByProduct.get((s.title ?? "").trim())?.qty ?? 0,
+        soldValue: soldByProduct.get((s.title ?? "").trim())?.value ?? 0,
+        returned: soldByProduct.get((s.title ?? "").trim())?.returned ?? 0,
+        status: s.status ?? "active",
       }))
       .sort((a, b) => b.stock - a.stock);
 
@@ -159,6 +176,10 @@ export async function GET(req: NextRequest) {
         stock: stock.reduce((a, s) => a + Number(s.stock || 0), 0),
         value: stock.reduce((a, s) => a + Number(s.stock || 0) * Number(s.price || 0), 0),
         sold: types.reduce((a, t) => a + t.sold, 0),
+        soldValue: types.reduce((a, t) => a + t.soldValue, 0),
+        returned: types.reduce((a, t) => a + t.returned, 0),
+        draftProducts: stock.filter((s) => s.status === "draft").length,
+        draftStock: stock.filter((s) => s.status === "draft").reduce((a, s) => a + Number(s.stock || 0), 0),
         outOfStock: stock.filter((s) => Number(s.stock || 0) <= 0).length,
       },
       rooms,

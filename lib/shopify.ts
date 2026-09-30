@@ -485,17 +485,22 @@ export interface StockProduct {
 }
 
 /**
- * Every ACTIVE product with its stock, summed over the variants.
+ * Every product with its stock, summed over the variants — draft as well as
+ * active.
  *
- * Drafts are excluded deliberately: the store carries ~6,700 of them against
- * ~430 live products, nearly all of the fabric/commercial catalogue, and they
- * would bury the retail lines the Stock page is about.
+ * Drafts were left out at first, on the grounds that the store carries ~6,700
+ * of them against ~430 live products. Nearly all are the fabric catalogue and
+ * the retail filter drops those anyway, but 54 retail products are sitting in
+ * draft holding 537 pieces, 505 of them towels. Stock on an unpublished
+ * product is still stock, so the caller decides with `status`.
  */
 export async function fetchStockProducts(): Promise<StockProduct[]> {
   const { token, base } = shopifyConfig();
-  let url: string | null =
-    `${base}/products.json?limit=250&status=active&fields=id,title,product_type,status,variants`;
   const out: StockProduct[] = [];
+
+  for (const status of ["active", "draft"]) {
+  let url: string | null =
+    `${base}/products.json?limit=250&status=${status}&fields=id,title,product_type,status,variants`;
 
   for (let guard = 0; guard < 100 && url; guard++) {
     const res: Response = await fetch(url, {
@@ -528,6 +533,7 @@ export async function fetchStockProducts(): Promise<StockProduct[]> {
       });
     }
     url = parseNextLink(res.headers.get("link"));
+  }
   }
   return out;
 }

@@ -12,6 +12,8 @@ interface TypeRow {
   products: number;
   stock: number;
   sold: number;
+  soldValue: number;
+  returned: number;
   value: number;
 }
 interface RoomRow {
@@ -19,6 +21,7 @@ interface RoomRow {
   products: number;
   stock: number;
   sold: number;
+  soldValue: number;
   value: number;
 }
 interface ProductRow {
@@ -30,12 +33,25 @@ interface ProductRow {
   variants: number;
   price: number;
   sold: number;
+  soldValue: number;
+  returned: number;
+  status: string;
 }
 interface Resp {
   ok: boolean;
   error?: string;
   window: { from: string; to: string; days: number };
-  totals: { products: number; stock: number; value: number; sold: number; outOfStock: number };
+  totals: {
+    products: number;
+    stock: number;
+    value: number;
+    sold: number;
+    soldValue: number;
+    returned: number;
+    outOfStock: number;
+    draftProducts: number;
+    draftStock: number;
+  };
   rooms: RoomRow[];
   types: TypeRow[];
   products: ProductRow[];
@@ -198,11 +214,19 @@ export default function StockPage() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="In stock" value={fmtNum(data.totals.stock)} hint="pieces on the website" strong />
             <Stat label="Stock value" value={fmtMoney(data.totals.value, currency)} hint="at list price" />
-            <Stat label="Sold" value={fmtNum(Math.round(data.totals.sold))} hint={`online · ${data.window.from} → ${data.window.to}`} />
+            <Stat
+              label="Sold"
+              value={fmtNum(Math.round(data.totals.sold))}
+              hint={`${fmtMoney(data.totals.soldValue, currency)} · ${data.window.from} → ${data.window.to}`}
+            />
             <Stat
               label="Out of stock"
               value={fmtNum(data.totals.outOfStock)}
-              hint={`of ${fmtNum(data.totals.products)} products`}
+              hint={`of ${fmtNum(data.totals.products)} products${
+                data.totals.draftProducts
+                  ? ` · ${fmtNum(data.totals.draftProducts)} draft holding ${fmtNum(data.totals.draftStock)}`
+                  : ""
+              }`}
             />
           </div>
 
@@ -247,11 +271,12 @@ stock now · sold in the last {data.window.days} days
             </div>
             <table className="w-full table-fixed border-collapse text-left text-xs">
               <colgroup>
-                <col className="w-[38%]" />
-                <col className="w-[11%]" />
-                <col className="w-[16%]" />
-                <col className="w-[16%]" />
-                <col className="w-[19%]" />
+                <col className="w-[32%]" />
+                <col className="w-[9%]" />
+                <col className="w-[13%]" />
+                <col className="w-[10%]" />
+                <col className="w-[18%]" />
+                <col className="w-[18%]" />
               </colgroup>
               <thead className="bg-gray-50">
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -259,6 +284,7 @@ stock now · sold in the last {data.window.days} days
                   <th className="border-b border-gray-200 px-2 py-2 text-right font-semibold">Products</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">In stock</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Sold</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Sold value</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Stock value</th>
                 </tr>
               </thead>
@@ -279,6 +305,14 @@ stock now · sold in the last {data.window.days} days
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
                       {t.sold ? fmtNum(Math.round(t.sold)) : <span className="text-gray-300">—</span>}
+                      {t.returned > 0 && (
+                        <span className="ml-1 text-[10px] text-rose-500" title="of which returned">
+                          ({fmtNum(Math.round(t.returned))})
+                        </span>
+                      )}
+                    </td>
+                    <td className="truncate px-3 py-2 text-right tabular-nums text-gray-700">
+                      {t.soldValue ? fmtMoney(t.soldValue, currency) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="truncate px-3 py-2 text-right tabular-nums text-gray-600">
                       {fmtMoney(t.value, currency)}
@@ -297,11 +331,12 @@ stock now · sold in the last {data.window.days} days
             <div className="max-h-[460px] overflow-y-auto">
               <table className="w-full table-fixed border-collapse text-left text-xs">
                 <colgroup>
-                  <col className="w-[40%]" />
-                  <col className="w-[22%]" />
+                  <col className="w-[34%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[9%]" />
                   <col className="w-[10%]" />
-                  <col className="w-[12%]" />
                   <col className="w-[16%]" />
+                  <col className="w-[11%]" />
                 </colgroup>
                 <thead className="sticky top-0 bg-gray-50">
                   <tr className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -309,6 +344,7 @@ stock now · sold in the last {data.window.days} days
                     <th className="border-b border-gray-200 px-3 py-2 font-semibold">Type</th>
                     <th className="border-b border-gray-200 px-2 py-2 text-right font-semibold">Price</th>
                     <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Sold</th>
+                    <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Sold value</th>
                     <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">In stock</th>
                   </tr>
                 </thead>
@@ -317,6 +353,14 @@ stock now · sold in the last {data.window.days} days
                     <tr key={p.product_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                       <td className="truncate px-3 py-1.5 text-gray-800" title={p.title}>
                         {p.title}
+                        {p.status === "draft" && (
+                          <span
+                            className="ml-1.5 rounded bg-amber-50 px-1 text-[10px] font-medium text-amber-700"
+                            title="not published on the website"
+                          >
+                            draft
+                          </span>
+                        )}
                         {p.variants > 1 && (
                           <span className="ml-1.5 text-[10px] text-gray-400">{p.variants} variants</span>
                         )}
@@ -329,6 +373,9 @@ stock now · sold in the last {data.window.days} days
                       </td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
                         {p.sold ? fmtNum(Math.round(p.sold)) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="truncate px-3 py-1.5 text-right tabular-nums text-gray-600">
+                        {p.soldValue ? fmtMoney(p.soldValue, currency) : <span className="text-gray-300">—</span>}
                       </td>
                       <td
                         className={`px-3 py-1.5 text-right tabular-nums ${
@@ -345,10 +392,11 @@ stock now · sold in the last {data.window.days} days
           </section>
 
           <p className="px-1 text-[11px] leading-relaxed text-gray-400">
-            Stock is what the website holds right now, taken from the live Shopify products — a snapshot, not a
-            history, so it does not move with the period above. Sold counts online sales over that period, so the two
-            together read as &ldquo;what I have, and how fast it goes&rdquo;. Drafts are excluded: the store carries thousands of them from the
-            fabric catalogue.
+            Stock is what the website holds right now, taken from the Shopify products — a snapshot, not a history, so
+            it does not move with the period above. Draft products are counted too, marked as such: 54 retail products
+            sit unpublished holding 537 pieces, and stock on an unpublished product is still stock. Sold counts online
+            sales over the period and includes anything returned or refunded — the figure is what left the shelf, with
+            the returned count beside it in red.
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
         </div>
