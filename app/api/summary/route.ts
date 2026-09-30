@@ -324,6 +324,7 @@ export async function GET(req: NextRequest) {
         offlineValue: number;
         onlineValue: number;
         ids: Set<number>;
+        prices: Set<number>;
       }
     >();
     const bump = (name: string) => {
@@ -336,6 +337,7 @@ export async function GET(req: NextRequest) {
         offlineValue: 0,
         onlineValue: 0,
         ids: new Set<number>(),
+        prices: new Set<number>(),
       };
       productMap.set(key, e);
       return e;
@@ -351,11 +353,16 @@ export async function GET(req: NextRequest) {
       e.offline += Number(r.qty || 0);
       e.returned += Number(r.returned_qty || 0);
       e.offlineValue += Number(r.value || 0) - Number(r.returned_value || 0);
+      // The price one of these went out at. Collected per line, so a product
+      // sold at two prices reports both rather than averaging into a number
+      // nothing actually cost.
+      if (Number(r.qty || 0) > 0) e.prices.add(Math.round(Number(r.value || 0) / Number(r.qty)));
     }
     for (const r of orderItems) {
       const e = bump(r.title ?? "—");
       e.online += Number(r.quantity || 0);
       e.onlineValue += Number(r.quantity || 0) * Number(r.price || 0);
+      if (Number(r.price || 0) > 0) e.prices.add(Math.round(Number(r.price)));
     }
     // A line price is not the whole story of what a sale was worth: the order
     // carries a discount and shipping that belong to no single line, and the
@@ -385,6 +392,15 @@ export async function GET(req: NextRequest) {
         const offlineValue = v.offlineValue * offlineScale;
         const onlineValue = v.onlineValue * onlineScale;
         const pieces = v.offline + v.online;
+        // Odoo's price comes from value/qty while Shopify carries it exactly,
+        // so the same item lands as 349 on one side and 350 on the other. A
+        // pound apart is that rounding, not two prices — collapse it, and keep
+        // a real spread like 3,184 against 4,899.
+        const sorted = [...v.prices].sort((a, b) => a - b);
+        const prices =
+          sorted.length > 1 && sorted[sorted.length - 1] - sorted[0] <= 1
+            ? [sorted[sorted.length - 1]]
+            : sorted;
         return {
           product_id: [...v.ids][0] ?? 0,
           name: v.name,
@@ -394,10 +410,11 @@ export async function GET(req: NextRequest) {
           offlineValue,
           onlineValue,
           value: offlineValue + onlineValue,
-          // What one costs, off the unscaled line prices — the ticket price,
-          // not the apportioned share. Averaged across channels and variants
-          // when they differ, which is why a size range shows a blend.
-          unitPrice: pieces > 0 ? (v.offlineValue + v.onlineValue) / pieces : 0,
+          // What one costs, off the unscaled line prices. A single figure when
+          // every line agrees; the range when they do not, since a row can
+          // cover several variants and two channels.
+          unitPrice: prices.length ? prices[0] : 0,
+          unitPriceMax: prices.length ? prices[prices.length - 1] : 0,
           variants: v.ids.size,
           total: pieces,
         };

@@ -29,6 +29,7 @@ interface SummaryResp {
     onlineValue: number;
     value: number;
     unitPrice: number;
+    unitPriceMax: number;
     variants: number;
   }[];
   meta: {
@@ -430,7 +431,18 @@ export default function SummaryPage() {
                       )}
                     </td>
                     <td className="border-l border-gray-100 px-2 py-2 text-right tabular-nums text-gray-500">
-                      {p.unitPrice ? fmtNum(Math.round(p.unitPrice)) : <span className="text-gray-300">—</span>}
+                      {p.unitPrice ? (
+                        p.unitPriceMax > p.unitPrice ? (
+                          <span title={`sold at ${fmtNum(p.unitPrice)} and ${fmtNum(p.unitPriceMax)}`}>
+                            {fmtNum(p.unitPrice)}
+                            <span className="text-gray-400">–{fmtNum(p.unitPriceMax)}</span>
+                          </span>
+                        ) : (
+                          fmtNum(p.unitPrice)
+                        )
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
                     </td>
                     <Qty n={p.offline} bordered />
                     <Money n={p.offlineValue} />
