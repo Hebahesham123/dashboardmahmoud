@@ -50,6 +50,15 @@ const ROOM_COLOR: Record<string, string> = {
 };
 const roomHue = (r: string) => ROOM_COLOR[r] ?? ROOM_COLOR.Other;
 
+/** Shortcuts for the sold window; the date inputs cover anything else. */
+const PRESETS: { label: string; from: () => string; to: () => string }[] = [
+  { label: "Today", from: todayStr, to: todayStr },
+  { label: "Yesterday", from: () => daysAgoStr(1), to: () => daysAgoStr(1) },
+  { label: "7 days", from: () => daysAgoStr(6), to: todayStr },
+  { label: "30 days", from: () => daysAgoStr(29), to: todayStr },
+  { label: "90 days", from: () => daysAgoStr(89), to: todayStr },
+];
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -60,17 +69,20 @@ function daysAgoStr(n: number) {
 }
 
 export default function StockPage() {
-  const [days, setDays] = useState(30);
+  // The window applies to the SOLD side only — stock is a snapshot and has no
+  // period to it.
+  const [from, setFrom] = useState(daysAgoStr(29));
+  const [to, setTo] = useState(todayStr());
   const [room, setRoom] = useState("");
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const query = useMemo(() => {
-    const p = new URLSearchParams({ from: daysAgoStr(days - 1), to: todayStr() });
+    const p = new URLSearchParams({ from, to });
     if (room) p.set("room", room);
     return p.toString();
-  }, [days, room]);
+  }, [from, to, room]);
 
   useEffect(() => {
     let alive = true;
@@ -109,19 +121,43 @@ export default function StockPage() {
 
       <div className="mb-4 rounded-xl border border-[#e7e2dc] bg-white p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-400">Sold over</span>
+          <span className="text-xs text-gray-400">Sold</span>
           <div className="inline-flex overflow-hidden rounded-lg border border-[#ddd6cd] text-xs font-medium">
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                onClick={() => setDays(d)}
-                className={`px-3 py-1.5 ${
-                  days === d ? "bg-[#6f4423] text-white" : "bg-white text-gray-600 hover:bg-[#faf7f3]"
-                }`}
-              >
-                {d} days
-              </button>
-            ))}
+            {PRESETS.map((preset) => {
+              const f = preset.from();
+              const t = preset.to();
+              const active = f === from && t === to;
+              return (
+                <button
+                  key={preset.label}
+                  onClick={() => {
+                    setFrom(f);
+                    setTo(t);
+                  }}
+                  className={`px-3 py-1.5 ${
+                    active ? "bg-[#6f4423] text-white" : "bg-white text-gray-600 hover:bg-[#faf7f3]"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-1.5 text-xs">
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="rounded-lg border border-[#ddd6cd] px-2 py-1.5"
+            />
+            <span className="text-gray-400">→</span>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="rounded-lg border border-[#ddd6cd] px-2 py-1.5"
+            />
           </div>
 
           <select
@@ -162,7 +198,7 @@ export default function StockPage() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="In stock" value={fmtNum(data.totals.stock)} hint="pieces on the website" strong />
             <Stat label="Stock value" value={fmtMoney(data.totals.value, currency)} hint="at list price" />
-            <Stat label="Sold" value={fmtNum(Math.round(data.totals.sold))} hint={`online, last ${data.window.days} days`} />
+            <Stat label="Sold" value={fmtNum(Math.round(data.totals.sold))} hint={`online · ${data.window.from} → ${data.window.to}`} />
             <Stat
               label="Out of stock"
               value={fmtNum(data.totals.outOfStock)}
