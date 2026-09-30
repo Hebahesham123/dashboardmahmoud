@@ -97,8 +97,7 @@ export async function GET(req: NextRequest) {
       if (name) soldByProduct.set(name, (soldByProduct.get(name) ?? 0) + qty);
     }
 
-    // One line per type: what is held, what went, and how long the holding
-    // lasts at that rate.
+    // One line per type: what is held against what went.
     const days = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1);
     const byType = new Map<
       string,
@@ -122,16 +121,10 @@ export async function GET(req: NextRequest) {
 
     const types = [...byType.values()]
       .map((t) => {
-        const soldQty = soldBySub.get(t.subcategory) ?? 0;
-        const perDay = soldQty / days;
         return {
           ...t,
           label: `${t.category} / ${t.subcategory}`,
-          sold: soldQty,
-          // Days of cover at the rate it has been going. Null when nothing
-          // moved — "for ever" is not a useful number, and neither is a
-          // division by zero.
-          daysCover: perDay > 0 ? Math.round(t.stock / perDay) : null,
+          sold: soldBySub.get(t.subcategory) ?? 0,
         };
       })
       .sort((a, b) => b.stock - a.stock);

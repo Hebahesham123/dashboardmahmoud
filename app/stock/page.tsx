@@ -13,7 +13,6 @@ interface TypeRow {
   stock: number;
   sold: number;
   value: number;
-  daysCover: number | null;
 }
 interface RoomRow {
   label: string;
@@ -207,17 +206,16 @@ export default function StockPage() {
             <div className="flex items-baseline justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <h2 className="text-sm font-bold text-gray-900">By type</h2>
               <p className="text-[11px] text-gray-400">
-                stock now · sold in the last {data.window.days} days · how long it lasts at that rate
+stock now · sold in the last {data.window.days} days
               </p>
             </div>
             <table className="w-full table-fixed border-collapse text-left text-xs">
               <colgroup>
-                <col className="w-[34%]" />
-                <col className="w-[10%]" />
-                <col className="w-[13%]" />
-                <col className="w-[13%]" />
-                <col className="w-[13%]" />
-                <col className="w-[17%]" />
+                <col className="w-[38%]" />
+                <col className="w-[11%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[19%]" />
               </colgroup>
               <thead className="bg-gray-50">
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -225,7 +223,6 @@ export default function StockPage() {
                   <th className="border-b border-gray-200 px-2 py-2 text-right font-semibold">Products</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">In stock</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Sold</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Days left</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Stock value</th>
                 </tr>
               </thead>
@@ -246,13 +243,6 @@ export default function StockPage() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
                       {t.sold ? fmtNum(Math.round(t.sold)) : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td
-                      className={`px-3 py-2 text-right tabular-nums ${
-                        t.daysCover !== null && t.daysCover < 30 ? "font-semibold text-rose-600" : "text-gray-500"
-                      }`}
-                    >
-                      {t.daysCover === null ? <span className="text-gray-300">—</span> : fmtNum(t.daysCover)}
                     </td>
                     <td className="truncate px-3 py-2 text-right tabular-nums text-gray-600">
                       {fmtMoney(t.value, currency)}
@@ -321,8 +311,7 @@ export default function StockPage() {
           <p className="px-1 text-[11px] leading-relaxed text-gray-400">
             Stock is what the website holds right now, taken from the live Shopify products — a snapshot, not a
             history, so it does not move with the period above. Sold counts online sales over that period, so the two
-            together read as &ldquo;what I have, and how fast it goes&rdquo;. Days left is stock ÷ the daily rate over
-            that window, blank where nothing sold. Drafts are excluded: the store carries thousands of them from the
+            together read as &ldquo;what I have, and how fast it goes&rdquo;. Drafts are excluded: the store carries thousands of them from the
             fabric catalogue.
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
