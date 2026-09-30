@@ -316,11 +316,18 @@ export async function GET(req: NextRequest) {
     // you would call a product.
     const productMap = new Map<
       string,
-      { name: string; offline: number; online: number; value: number; ids: Set<number> }
+      { name: string; offline: number; online: number; returned: number; value: number; ids: Set<number> }
     >();
     const bump = (name: string) => {
       const key = name.trim();
-      const e = productMap.get(key) ?? { name: key, offline: 0, online: 0, value: 0, ids: new Set<number>() };
+      const e = productMap.get(key) ?? {
+        name: key,
+        offline: 0,
+        online: 0,
+        returned: 0,
+        value: 0,
+        ids: new Set<number>(),
+      };
       productMap.set(key, e);
       return e;
     };
@@ -329,7 +336,11 @@ export async function GET(req: NextRequest) {
       if (isWeb(r.branch)) continue; // the website is counted from Shopify below
       const e = bump(r.product_name ?? String(r.product_id));
       e.ids.add(r.product_id);
-      e.offline += Number(r.qty || 0) - Number(r.returned_qty || 0);
+      // Sold and returned stay apart: netting them made a day of returns with
+      // no sales read as "-11 in the shops", which is not a thing that can
+      // happen to a count of goods sold.
+      e.offline += Number(r.qty || 0);
+      e.returned += Number(r.returned_qty || 0);
       e.value += Number(r.value || 0) - Number(r.returned_value || 0);
     }
     for (const r of orderItems) {
@@ -343,11 +354,12 @@ export async function GET(req: NextRequest) {
         name: v.name,
         offline: v.offline,
         online: v.online,
+        returned: v.returned,
         value: v.value,
         variants: v.ids.size,
         total: v.offline + v.online,
       }))
-      .filter((p) => p.total !== 0)
+      .filter((p) => p.total !== 0 || p.returned !== 0)
       .sort((a, b) => b.total - a.total);
 
     return NextResponse.json({

@@ -24,6 +24,7 @@ interface SummaryResp {
     offline: number;
     online: number;
     total: number;
+    returned: number;
     value: number;
     variants: number;
   }[];
@@ -149,6 +150,7 @@ export default function SummaryPage() {
     () => ({
       offline: (data?.products ?? []).reduce((a, p) => a + p.offline, 0),
       online: (data?.products ?? []).reduce((a, p) => a + p.online, 0),
+      returned: (data?.products ?? []).reduce((a, p) => a + p.returned, 0),
     }),
     [data]
   );
@@ -359,16 +361,18 @@ export default function SummaryPage() {
             <p className="text-[11px] text-gray-400">
               {fmtNum(data.products.length)} products · {fmtNum(Math.round(productTotals.offline))} in the shops ·{" "}
               {fmtNum(Math.round(productTotals.online))} online
+              {productTotals.returned > 0 && ` · ${fmtNum(Math.round(productTotals.returned))} returned`}
             </p>
           </div>
           <div className="max-h-[460px] overflow-y-auto">
             <table className="w-full table-fixed border-collapse text-left text-xs">
               <colgroup>
-                <col className="w-[46%]" />
-                <col className="w-[13%]" />
-                <col className="w-[13%]" />
+                <col className="w-[40%]" />
                 <col className="w-[12%]" />
-                <col className="w-[16%]" />
+                <col className="w-[12%]" />
+                <col className="w-[11%]" />
+                <col className="w-[11%]" />
+                <col className="w-[14%]" />
               </colgroup>
               <thead className="sticky top-0 bg-gray-50">
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -376,6 +380,7 @@ export default function SummaryPage() {
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Offline</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Online</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Total</th>
+                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Returned</th>
                   <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Value</th>
                 </tr>
               </thead>
@@ -396,6 +401,9 @@ export default function SummaryPage() {
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900">
                       {fmtNum(Math.round(p.total))}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-rose-600">
+                      {p.returned ? fmtNum(Math.round(p.returned)) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="truncate px-3 py-1.5 text-right tabular-nums text-gray-600">{money(p.value)}</td>
                   </tr>
