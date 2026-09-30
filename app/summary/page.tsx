@@ -371,47 +371,78 @@ export default function SummaryPage() {
           </div>
           <div className="max-h-[460px] overflow-y-auto">
             <table className="w-full table-fixed border-collapse text-left text-xs">
+              {/* Widths must total 100%: at 90% the browser handed the
+                  remainder to a phantom column on the right. */}
               <colgroup>
-                <col className="w-[34%]" />
-                <col className="w-[15%]" />
-                <col className="w-[15%]" />
-                <col className="w-[16%]" />
-                <col className="w-[10%]" />
+                <col className="w-[28%]" />
+                <col className="w-[9%]" />
+                <col className="w-[12%]" />
+                <col className="w-[9%]" />
+                <col className="w-[12%]" />
+                <col className="w-[9%]" />
+                <col className="w-[13%]" />
+                <col className="w-[8%]" />
               </colgroup>
-              <thead className="sticky top-0 bg-gray-50">
+              <thead className="sticky top-0 z-10 bg-gray-50">
+                {/* Two header rows: the channel, then what each number is. One
+                    row of stacked figures left the money unlabelled. */}
                 <tr className="text-[10px] uppercase tracking-wider text-gray-500">
-                  <th className="border-b border-gray-200 px-3 py-2 font-semibold">Product</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Offline</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Online</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Total</th>
-                  <th className="border-b border-gray-200 px-3 py-2 text-right font-semibold">Returned</th>
+                  <th rowSpan={2} className="border-b border-gray-200 px-3 py-2 align-bottom font-semibold">
+                    Product
+                  </th>
+                  <th colSpan={2} className="border-b border-l border-gray-200 px-3 pt-2 text-center font-semibold">
+                    In the shops
+                  </th>
+                  <th colSpan={2} className="border-b border-l border-gray-200 px-3 pt-2 text-center font-semibold">
+                    Online
+                  </th>
+                  <th colSpan={2} className="border-b border-l border-gray-200 px-3 pt-2 text-center font-semibold">
+                    Total
+                  </th>
+                  <th rowSpan={2} className="border-b border-l border-gray-200 px-3 py-2 text-right align-bottom font-semibold">
+                    Ret.
+                  </th>
+                </tr>
+                <tr className="text-[10px] text-gray-400">
+                  <th className="border-b border-l border-gray-200 px-2 pb-1.5 text-right font-medium">Qty</th>
+                  <th className="border-b border-gray-200 px-3 pb-1.5 text-right font-medium">EGP</th>
+                  <th className="border-b border-l border-gray-200 px-2 pb-1.5 text-right font-medium">Qty</th>
+                  <th className="border-b border-gray-200 px-3 pb-1.5 text-right font-medium">EGP</th>
+                  <th className="border-b border-l border-gray-200 px-2 pb-1.5 text-right font-medium">Qty</th>
+                  <th className="border-b border-gray-200 px-3 pb-1.5 text-right font-medium">EGP</th>
                 </tr>
               </thead>
               <tbody>
                 {data.products.map((p) => (
                   <tr key={p.name} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="truncate px-3 py-1.5 text-gray-800" title={p.name}>
+                    <td className="truncate px-3 py-2 text-gray-800" title={p.name}>
                       {p.name}
                       {p.variants > 1 && (
                         <span className="ml-1.5 text-[10px] text-gray-400">{p.variants} variants</span>
                       )}
                     </td>
-                    <QtyValue qty={p.offline} value={p.offlineValue} />
-                    <QtyValue qty={p.online} value={p.onlineValue} />
-                    <QtyValue qty={p.total} value={p.value} strong />
-                    <td className="px-3 py-1.5 text-right align-top tabular-nums text-rose-600">
+                    <Qty n={p.offline} bordered />
+                    <Money n={p.offlineValue} />
+                    <Qty n={p.online} bordered />
+                    <Money n={p.onlineValue} />
+                    <Qty n={p.total} bordered strong />
+                    <Money n={p.value} strong />
+                    <td className="border-l border-gray-100 px-3 py-2 text-right tabular-nums text-rose-600">
                       {p.returned ? fmtNum(Math.round(p.returned)) : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot className="sticky bottom-0 bg-[#f6f2ed]">
-                <tr className="font-semibold text-gray-900">
-                  <td className="border-t border-gray-300 px-3 py-2">Total</td>
-                  <QtyValue qty={productTotals.offline} value={productTotals.offlineValue} strong border />
-                  <QtyValue qty={productTotals.online} value={productTotals.onlineValue} strong border />
-                  <QtyValue qty={productTotals.offline + productTotals.online} value={productTotals.value} strong border />
-                  <td className="border-t border-gray-300 px-3 py-2 text-right tabular-nums text-rose-600">
+                <tr className="border-t-2 border-[#d8c3aa] font-semibold text-gray-900">
+                  <td className="px-3 py-2">Total</td>
+                  <Qty n={productTotals.offline} bordered strong />
+                  <Money n={productTotals.offlineValue} strong />
+                  <Qty n={productTotals.online} bordered strong />
+                  <Money n={productTotals.onlineValue} strong />
+                  <Qty n={productTotals.offline + productTotals.online} bordered strong />
+                  <Money n={productTotals.value} strong />
+                  <td className="border-l border-gray-200 px-3 py-2 text-right tabular-nums text-rose-600">
                     {productTotals.returned ? fmtNum(Math.round(productTotals.returned)) : "—"}
                   </td>
                 </tr>
@@ -556,29 +587,29 @@ function GroupGap({ cols }: { cols: string[] }) {
   );
 }
 
-/** Pieces above, what they came to below — one cell, two facts. */
-function QtyValue({
-  qty,
-  value,
-  strong,
-  border,
-}: {
-  qty: number;
-  value: number;
-  strong?: boolean;
-  border?: boolean;
-}) {
-  const none = !qty && !value;
+function Qty({ n, bordered, strong }: { n: number; bordered?: boolean; strong?: boolean }) {
   return (
-    <td className={`px-3 py-1.5 text-right align-top tabular-nums ${border ? "border-t border-gray-300" : ""}`}>
-      {none ? (
-        <span className="text-gray-300">—</span>
-      ) : (
-        <>
-          <div className={strong ? "font-semibold text-gray-900" : "text-gray-700"}>{fmtNum(Math.round(qty))}</div>
-          <div className="text-[10px] text-gray-400">{fmtNum(Math.round(value))}</div>
-        </>
-      )}
+    <td
+      className={`px-2 py-2 text-right tabular-nums ${bordered ? "border-l border-gray-100" : ""} ${
+        strong ? "font-semibold text-gray-900" : "text-gray-700"
+      }`}
+    >
+      {n ? fmtNum(Math.round(n)) : <span className="text-gray-300">—</span>}
+    </td>
+  );
+}
+
+/** Money, with a loss in red — a day whose returns outweigh its sales is a
+ *  real thing and should look like one rather than like a broken figure. */
+function Money({ n, strong }: { n: number; strong?: boolean }) {
+  const v = Math.round(n);
+  return (
+    <td
+      className={`px-3 py-2 text-right tabular-nums ${
+        v < 0 ? "text-rose-600" : strong ? "font-semibold text-gray-900" : "text-gray-600"
+      }`}
+    >
+      {v ? fmtNum(v) : <span className="text-gray-300">—</span>}
     </td>
   );
 }
