@@ -503,5 +503,15 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
 export function parseShopifyType(productType: string | null | undefined): ProductCategory | null {
   const t = (productType ?? "").trim();
   if (!t) return null;
-  return parseCategory(NS_PREFIX.test(t) ? t : `NS Home / ${t}`);
+  const cat = parseCategory(NS_PREFIX.test(t) ? t : `NS Home / ${t}`);
+  // The store holds the fabric catalogue too, under types like "قماش تنجيد".
+  // Those parse perfectly well as a category, so the parse alone is no filter:
+  // it let 1.5M metres of upholstery in beside 2,021 towels. Only a category
+  // the retail taxonomy actually names counts.
+  return cat && isRetailCategory(cat.category) ? cat : null;
+}
+
+/** Whether a category belongs to the NS Home retail taxonomy. */
+export function isRetailCategory(category: string | null | undefined): boolean {
+  return Boolean(category && category in ROOM_OF);
 }
