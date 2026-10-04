@@ -372,6 +372,9 @@ export default function SummaryPage() {
               {fmtNum(data.products.length)} products · {fmtNum(Math.round(productTotals.offline))} in the shops ·{" "}
               {fmtNum(Math.round(productTotals.online))} online
               {productTotals.returned > 0 && ` · ${fmtNum(Math.round(productTotals.returned))} returned`}
+              <span className="ml-1">
+                · {money(productTotals.value)} at list price, {money(data.productsNet.total)} after discounts
+              </span>
             </p>
           </div>
           <div className="max-h-[460px] overflow-y-auto">
