@@ -18,6 +18,9 @@ interface SummaryResp {
   // how much cashback they spent, and what they came to.
   cashback: { orders: Block; spent: Block; net: Block; purchases: Block };
   cashbackMtd: { orders: Block; spent: Block; net: Block; purchases: Block };
+  // What the table above reports for the same window, so the products section
+  // can show the discounts and land on the same figure.
+  productsNet: { offline: number; online: number; total: number };
   products: {
     product_id: number;
     name: string;
@@ -458,7 +461,7 @@ export default function SummaryPage() {
               </tbody>
               <tfoot className="sticky bottom-0 bg-[#f6f2ed]">
                 <tr className="border-t-2 border-[#d8c3aa] font-semibold text-gray-900">
-                  <td className="px-3 py-2">Total</td>
+                  <td className="px-3 py-2">At list price</td>
                   <td className="border-l border-gray-200 px-2 py-2 text-right tabular-nums text-gray-400">—</td>
                   <Qty n={productTotals.offline} bordered strong />
                   <Money n={productTotals.offlineValue} strong />
@@ -469,6 +472,42 @@ export default function SummaryPage() {
                   <td className="border-l border-gray-200 px-3 py-2 text-right tabular-nums text-rose-600">
                     {productTotals.returned ? fmtNum(Math.round(productTotals.returned)) : "—"}
                   </td>
+                </tr>
+                {/* A product row is price x quantity, which cannot carry the
+                    order-level discounts — they belong to no single line. So
+                    they are taken off here, and the section lands on the same
+                    figure as the table above rather than near it. */}
+                <tr className="text-[11px] text-rose-600">
+                  <td className="px-3 py-1.5">Order discounts</td>
+                  <td className="border-l border-gray-200" />
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.offline - productTotals.offlineValue))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.online - productTotals.onlineValue))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.total - productTotals.value))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                </tr>
+                <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
+                  <td className="px-3 py-2">After discounts · as the table above</td>
+                  <td className="border-l border-gray-200" />
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.offline))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.online))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Math.round(data.productsNet.total))}</td>
+                  <td className="border-l border-gray-200" />
                 </tr>
               </tfoot>
             </table>

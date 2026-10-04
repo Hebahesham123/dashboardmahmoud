@@ -423,9 +423,15 @@ export async function GET(req: NextRequest) {
       ok: true,
       channels,
       products,
-      // What the table above reports for the same window: list price here,
-      // net there, the gap being the order-level discounts.
-      productsNet: period.Total?.value ?? 0,
+      // What the table above reports for the same window, split the same way
+      // as the product columns. The products section totals the list price;
+      // the gap between the two is the order-level discounts, and the page
+      // shows it as a line rather than leaving the reader to find it.
+      productsNet: {
+        offline: (period.Total?.value ?? 0) - (period[WEBSITE]?.value ?? 0),
+        online: period[WEBSITE]?.value ?? 0,
+        total: period.Total?.value ?? 0,
+      },
       period,
       mtd: periodAgg(monthStart, to),
       lastMonth: periodAgg(lmFrom, lmTo), // same day/range, one month back
