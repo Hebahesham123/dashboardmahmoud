@@ -687,7 +687,12 @@ function Step({ from, to, inside }: { from?: number; to: number; inside?: boolea
   if (from === undefined || from === 0) return null;
   const pct = ((to - from) / Math.abs(from)) * 100;
   const up = pct >= 0;
-  const text = `${up ? "\u25b2" : "\u25bc"}${Math.abs(Math.round(pct))}%`;
+  // No triangle in the upright label: the 180deg rotation that stands the text
+  // up turns the glyph over with it, so a rise drew as a down arrow \u2014 Sep was
+  // +161% on Aug and the chart showed it falling. A plus or minus survives the
+  // rotation; the axis label below the bar keeps the triangle.
+  const text = `${up ? "+" : "\u2212"}${Math.abs(Math.round(pct))}%`;
+  const axisText = `${up ? "\u25b2" : "\u25bc"}${Math.abs(Math.round(pct))}%`;
   const title = `${up ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% on the previous column`;
   if (inside) {
     // On the bar, upright, in white — the bar is dark enough to carry it, and
@@ -709,7 +714,7 @@ function Step({ from, to, inside }: { from?: number; to: number; inside?: boolea
       }`}
       title={title}
     >
-      {text}
+      {axisText}
     </span>
   );
 }

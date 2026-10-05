@@ -484,8 +484,16 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
       kind: cat ? ("product" as const) : kindOf(r.product_name),
     };
     if (refund) {
-      e.returned_qty += Math.abs(rawQty);
-      e.returned_value += Math.abs(rawValue);
+      // Keep the sign. A credit note reverses a sale, so its contribution is
+      // minus the line — and `net = value - returned_value` only gets that
+      // right if returned_value carries the line's own sign.
+      //
+      // Taking the magnitude broke the discount lines, which are negative: a
+      // reversed 3,033 discount should add 3,033 back, and instead took 3,033
+      // off, moving the day by twice the figure. 29 Sep at مدينة نصر read
+      // -23,253 against the -17,187 Odoo reports.
+      e.returned_qty += rawQty;
+      e.returned_value += rawValue;
     } else {
       e.qty += rawQty;
       e.value += rawValue;
