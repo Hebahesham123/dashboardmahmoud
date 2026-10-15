@@ -202,6 +202,16 @@ export async function GET(req: NextRequest) {
       );
     }
     const onlineSource = categoryFiltered ? "odoo" : "shopify";
+
+    /**
+     * Whether the website belongs in this view at all.
+     *
+     * The Shopify total is read whole, with no branch in it, so it was being
+     * added however the page was filtered: picking مدينة نصر reported 323,311
+     * — its own 123,405 plus the entire website's 199,906. A shop's figure has
+     * to be the shop's.
+     */
+    const includeOnline = channel !== "offline" && (!branch || isOnline(branch));
     const netOf = (r: { value: number; returned_value: number }) =>
       Number(r.value || 0) - Number(r.returned_value || 0);
     const salesOf = (pred: (r: { branch: string }) => boolean) =>
@@ -209,7 +219,11 @@ export async function GET(req: NextRequest) {
         ? inBand.filter(pred).reduce((a, r) => a + r.value, 0)
         : rows.filter(pred).reduce((a, r) => a + netOf(r), 0);
 
-    const onlineSales = onlineSource === "shopify" ? shopifyOnline : salesOf((r) => isOnline(r.branch));
+    const onlineSales = !includeOnline
+      ? 0
+      : onlineSource === "shopify"
+        ? shopifyOnline
+        : salesOf((r) => isOnline(r.branch));
     const branchSales = salesOf((r) => !isOnline(r.branch));
     const totalSales = onlineSales + branchSales;
 
@@ -306,7 +320,7 @@ export async function GET(req: NextRequest) {
     // discount ones included, is exact. Online comes from Shopify per day so a
     // column and the headline agree.
     const onlineByDay = new Map<string, number>();
-    if (onlineSource === "shopify") {
+    if (onlineSource === "shopify" && includeOnline) {
       const { data: dmAll } = await sb.from("daily_metrics").select("day,total_sales");
       for (const r of (dmAll ?? []) as { day: string; total_sales: number }[]) {
         onlineByDay.set((r.day ?? "").slice(0, 10), Number(r.total_sales || 0));
@@ -325,10 +339,10 @@ export async function GET(req: NextRequest) {
           e.units += Number(r.qty || 0) - Number(r.returned_qty || 0);
         }
         // Online value comes from Shopify below; Odoo's copy of it is skipped.
-        if (onlineSource === "shopify" && isOnline(r.branch)) continue;
+        if (onlineSource === "shopify" && includeOnline && isOnline(r.branch)) continue;
         e.value += netOf(r);
       }
-      if (onlineSource === "shopify") {
+      if (onlineSource === "shopify" && includeOnline) {
         const lo = src.length ? src.reduce((a, r) => (r.day < a ? r.day : a), src[0].day) : null;
         const hi = src.length ? src.reduce((a, r) => (r.day > a ? r.day : a), src[0].day) : null;
         for (const [day, v] of onlineByDay) {
@@ -404,7 +418,7 @@ export async function GET(req: NextRequest) {
       .reduce((acc, r) => acc + netOf(r), 0);
 
     let monthOnlineSales = 0;
-    if (onlineSource === "shopify") {
+    if (onlineSource === "shopify" && includeOnline) {
       const { data: dmMonth } = await sb
         .from("daily_metrics")
         .select("day,total_sales")
@@ -415,7 +429,9 @@ export async function GET(req: NextRequest) {
         0
       );
     } else {
-      monthOnlineSales = monthRows.filter((r) => isOnline(r.branch)).reduce((acc, r) => acc + netOf(r), 0);
+      monthOnlineSales = includeOnline
+        ? monthRows.filter((r) => isOnline(r.branch)).reduce((acc, r) => acc + netOf(r), 0)
+        : 0;
     }
     const monthUnits = monthRows
       .filter((r) => (r.kind ?? "product") === "product")
@@ -471,6 +487,7 @@ export async function GET(req: NextRequest) {
         totalSales,
         priceFiltered,
         onlineSource,
+        includeOnline,
         products: byProduct.size,
         returnedUnits: inBand.reduce((acc, r) => acc + r.returnedQty, 0),
         returnedValue: inBand.reduce((acc, r) => acc + r.returnedValue, 0),
