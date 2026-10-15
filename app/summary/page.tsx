@@ -177,18 +177,24 @@ export default function SummaryPage() {
   const mtdPlusCashback: Block = useMemo(() => {
     const out: Block = {};
     if (data) {
-      // Only the website's vouchers are missing from the value.
+      // What was actually collected, which is the figure the Products sold
+      // footer ends on — one number for the money taken, not two.
       //
-      // Odoo leaves the redemption line out of its feed altogether — it is
-      // filed under category "All", which the NS Home filter drops — so a
-      // branch figure is ALREADY before cashback and adding it again
-      // double-counts. Shopify does deduct its codes, so the online figure is
-      // the only one short. Adding both overstated 1-15 Oct by 3,688.
-      const web = data.cashback?.spent?.Website?.value ?? 0;
+      // Only the shops' vouchers come off. Odoo leaves the redemption line out
+      // of its feed entirely (it is filed under category "All", which the NS
+      // Home filter drops), so a branch figure still has the voucher in it.
+      // Shopify applies its codes, so the online figure is already net and
+      // taking them off again would double-count.
+      const spent = data.cashback?.spent;
+      let shops = 0;
+      for (const c of cols) {
+        if (c === "Website" || c === "Total") continue;
+        shops += spent?.[c]?.value ?? 0;
+      }
       for (const c of cols) {
         const v = data.mtd[c]?.value ?? 0;
-        const cb = c === "Website" || c === "Total" ? web : 0;
-        out[c] = { orders: 0, value: v + cb };
+        const off = c === "Website" ? 0 : c === "Total" ? shops : spent?.[c]?.value ?? 0;
+        out[c] = { orders: 0, value: v - off };
       }
     }
     return out;
@@ -369,7 +375,7 @@ export default function SummaryPage() {
               {/* On its own below the cashback block: the month's takings with
                   the vouchers spent on them added back. */}
               <DataRow
-                label="MTD Value + Online Cashback"
+                label="MTD Paid After Cashback"
                 cols={cols}
                 block={mtdPlusCashback}
                 kind="value"
@@ -583,10 +589,10 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · Cashback is handled differently by each side, so only one of them needs adjusting. Odoo leaves the
-            redemption line out of its feed entirely, so a branch figure is already before cashback; Shopify takes its
-            codes off, so only the online figure is short. MTD Value + Online Cashback therefore adds the website&apos;s
-            vouchers alone, and Paid after cashback in the products table takes off the shops&apos; alone.
+            · MTD Paid After Cashback is the money actually taken, and matches Paid after cashback at the foot of the
+            products table. Only the shops&apos; vouchers come off: Odoo leaves the redemption line out of its feed
+            entirely, so a branch figure still has the voucher in it, while Shopify applies its codes, so the online
+            figure is already net and taking them off again would count them twice.
           </span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how
