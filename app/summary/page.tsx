@@ -165,6 +165,15 @@ export default function SummaryPage() {
     [data]
   );
 
+  // Cashback spent in the period, reshaped for the products footer: the
+  // website column is online, every branch column together is offline.
+  const cashbackSplit = useMemo(() => {
+    const spent = data?.cashback?.spent;
+    const total = spent?.Total?.value ?? 0;
+    const online = spent?.Website?.value ?? 0;
+    return { offline: total - online, online, total };
+  }, [data]);
+
   const mtdPlusCashback: Block = useMemo(() => {
     const out: Block = {};
     if (data) {
@@ -510,6 +519,44 @@ export default function SummaryPage() {
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Math.round(data.productsNet.total))}</td>
+                  <td className="border-l border-gray-200" />
+                </tr>
+                {/* Part of what is left was settled with a voucher rather than
+                    cash, so less money came in than the line above suggests.
+                    Same arithmetic as Paid After Cashback in the table, taken
+                    down to the products. */}
+                <tr className="text-[11px] text-rose-600">
+                  <td className="px-3 py-1.5 text-gray-500">Cashback used</td>
+                  <td className="border-l border-gray-200" />
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {cashbackSplit.offline ? fmtNum(-Math.round(cashbackSplit.offline)) : "—"}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {cashbackSplit.online ? fmtNum(-Math.round(cashbackSplit.online)) : "—"}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {cashbackSplit.total ? fmtNum(-Math.round(cashbackSplit.total)) : "—"}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                </tr>
+                <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
+                  <td className="px-3 py-2">Paid after cashback</td>
+                  <td className="border-l border-gray-200" />
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.offline - cashbackSplit.offline))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.online - cashbackSplit.online))}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtNum(Math.round(data.productsNet.total - cashbackSplit.total))}
+                  </td>
                   <td className="border-l border-gray-200" />
                 </tr>
               </tfoot>
