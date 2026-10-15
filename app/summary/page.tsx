@@ -177,24 +177,20 @@ export default function SummaryPage() {
   const mtdPlusCashback: Block = useMemo(() => {
     const out: Block = {};
     if (data) {
-      // What was actually collected, which is the figure the Products sold
-      // footer ends on — one number for the money taken, not two.
+      // Every order at its full value, an order paid with a voucher included
+      // at what it was worth rather than what was collected. Nothing is taken
+      // off; the only adjustment is upward, and only online.
       //
-      // Only the shops' vouchers come off. Odoo leaves the redemption line out
-      // of its feed entirely (it is filed under category "All", which the NS
-      // Home filter drops), so a branch figure still has the voucher in it.
-      // Shopify applies its codes, so the online figure is already net and
-      // taking them off again would double-count.
-      const spent = data.cashback?.spent;
-      let shops = 0;
-      for (const c of cols) {
-        if (c === "Website" || c === "Total") continue;
-        shops += spent?.[c]?.value ?? 0;
-      }
+      // Shopify applies a cashback code as a discount, so an online order
+      // arrives already reduced and has to be put back. Odoo leaves the
+      // redemption line out of its feed (it is filed under category "All",
+      // which the NS Home filter drops), so a branch order is already at full
+      // value and adding anything would count the voucher twice.
+      const web = data.cashback?.spent?.Website?.value ?? 0;
       for (const c of cols) {
         const v = data.mtd[c]?.value ?? 0;
-        const off = c === "Website" ? 0 : c === "Total" ? shops : spent?.[c]?.value ?? 0;
-        out[c] = { orders: 0, value: v - off };
+        const add = c === "Website" || c === "Total" ? web : 0;
+        out[c] = { orders: 0, value: v + add };
       }
     }
     return out;
@@ -375,7 +371,7 @@ export default function SummaryPage() {
               {/* On its own below the cashback block: the month's takings with
                   the vouchers spent on them added back. */}
               <DataRow
-                label="MTD Paid After Cashback"
+                label="MTD Value incl. Cashback Orders"
                 cols={cols}
                 block={mtdPlusCashback}
                 kind="value"
@@ -539,40 +535,40 @@ export default function SummaryPage() {
                     cash, so less money came in than the line above suggests.
                     Same arithmetic as Paid After Cashback in the table, taken
                     down to the products. */}
-                <tr className="text-[11px] text-rose-600">
-                  <td className="px-3 py-1.5 text-gray-500">Cashback used</td>
+                <tr className="text-[11px] text-emerald-700">
+                  <td className="px-3 py-1.5 text-gray-500">Online cashback, added back</td>
                   <td className="border-l border-gray-200" />
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-1.5 text-right tabular-nums">
-                    {cashbackSplit.offline ? fmtNum(-Math.round(cashbackSplit.offline)) : "—"}
-                  </td>
                   <td className="border-l border-gray-200" />
                   <td
                     className="px-3 py-1.5 text-right tabular-nums text-gray-400"
-                    title="Shopify already takes the voucher off the online figure, so there is nothing left to deduct here"
+                    title="Odoo leaves the voucher line out, so a shop order is already at its full value"
                   >
-                    {cashbackSplit.online ? `(${fmtNum(Math.round(cashbackSplit.online))})` : "—"}
+                    {cashbackSplit.offline ? `(${fmtNum(Math.round(cashbackSplit.offline))})` : "—"}
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-1.5 text-right tabular-nums">
-                    {cashbackSplit.offline ? fmtNum(-Math.round(cashbackSplit.offline)) : "—"}
+                    {cashbackSplit.online ? `+${fmtNum(Math.round(cashbackSplit.online))}` : "—"}
+                  </td>
+                  <td className="border-l border-gray-200" />
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {cashbackSplit.online ? `+${fmtNum(Math.round(cashbackSplit.online))}` : "—"}
                   </td>
                   <td className="border-l border-gray-200" />
                 </tr>
                 <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
-                  <td className="px-3 py-2">Paid after cashback</td>
+                  <td className="px-3 py-2">Incl. cashback orders at full value</td>
                   <td className="border-l border-gray-200" />
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.offline - cashbackSplit.offline))}
+                    {fmtNum(Math.round(data.productsNet.offline))}
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.online))}
+                    {fmtNum(Math.round(data.productsNet.online + cashbackSplit.online))}
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.total - cashbackSplit.offline))}
+                    {fmtNum(Math.round(data.productsNet.total + cashbackSplit.online))}
                   </td>
                   <td className="border-l border-gray-200" />
                 </tr>
@@ -589,10 +585,11 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · MTD Paid After Cashback is the money actually taken, and matches Paid after cashback at the foot of the
-            products table. Only the shops&apos; vouchers come off: Odoo leaves the redemption line out of its feed
-            entirely, so a branch figure still has the voucher in it, while Shopify applies its codes, so the online
-            figure is already net and taking them off again would count them twice.
+            · MTD Value incl. Cashback Orders counts every order at its full value, an order paid with a voucher
+            included at what it was worth. Nothing is deducted; the only adjustment is upward and only online, because
+            Shopify applies a cashback code as a discount and the order arrives already reduced. Odoo leaves the
+            redemption line out of its feed, so a branch order is already at full value. The products table ends on the
+            same figure.
           </span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how
