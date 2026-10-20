@@ -337,14 +337,14 @@ export default function SummaryPage() {
 
               {/* Orders that paid with cashback, on the day of purchase. */}
               <DataRow
-                label={<>Orders Using Cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Orders paid with cashback <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
                 block={data.cashback.orders}
                 kind="orders"
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Cashback Used <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Cashback used <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
                 block={data.cashback.spent}
                 kind="value"
@@ -352,14 +352,7 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
               <DataRow
-                label={<>Paid After Cashback <span className="font-normal opacity-80">purchases − cashback used</span></>}
-                cols={cols}
-                block={data.cashback.net}
-                kind="value"
-                tint={TINT.cashback}
-              />
-              <DataRow
-                label={<>Total Purchases from Cashback Orders <span className="font-normal opacity-80">{periodLabel}</span></>}
+                label={<>Value of those orders <span className="font-normal opacity-80">{periodLabel}</span></>}
                 cols={cols}
                 block={data.cashback.purchases}
                 kind="value"
@@ -371,7 +364,7 @@ export default function SummaryPage() {
               {/* On its own below the cashback block: the month's takings with
                   the vouchers spent on them added back. */}
               <DataRow
-                label="MTD Value incl. Cashback Orders"
+                label="MTD Total Sales"
                 cols={cols}
                 block={mtdPlusCashback}
                 kind="value"
@@ -483,7 +476,7 @@ export default function SummaryPage() {
               </tbody>
               <tfoot className="sticky bottom-0 bg-[#f6f2ed]">
                 <tr className="border-t-2 border-[#d8c3aa] font-semibold text-gray-900">
-                  <td className="px-3 py-2">At list price</td>
+                  <td className="px-3 py-2">Total at list price</td>
                   <td className="border-l border-gray-200 px-2 py-2 text-right tabular-nums text-gray-400">—</td>
                   <Qty n={productTotals.offline} bordered strong />
                   <Money n={productTotals.offlineValue} strong />
@@ -500,7 +493,7 @@ export default function SummaryPage() {
                     they are taken off here, and the section lands on the same
                     figure as the table above rather than near it. */}
                 <tr className="text-[11px] text-rose-600">
-                  <td className="px-3 py-1.5">Order discounts</td>
+                  <td className="px-3 py-1.5">Discounts</td>
                   <td className="border-l border-gray-200" />
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-1.5 text-right tabular-nums">
@@ -517,7 +510,7 @@ export default function SummaryPage() {
                   <td className="border-l border-gray-200" />
                 </tr>
                 <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
-                  <td className="px-3 py-2">After discounts · as the table above</td>
+                  <td className="px-3 py-2">Net sales · same as the table above</td>
                   <td className="border-l border-gray-200" />
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">
@@ -536,7 +529,7 @@ export default function SummaryPage() {
                     Same arithmetic as Paid After Cashback in the table, taken
                     down to the products. */}
                 <tr className="text-[11px] text-emerald-700">
-                  <td className="px-3 py-1.5 text-gray-500">Online cashback, added back</td>
+                  <td className="px-3 py-1.5 text-gray-500">Website cashback, added back</td>
                   <td className="border-l border-gray-200" />
                   <td className="border-l border-gray-200" />
                   <td
@@ -556,7 +549,7 @@ export default function SummaryPage() {
                   <td className="border-l border-gray-200" />
                 </tr>
                 <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
-                  <td className="px-3 py-2">Incl. cashback orders at full value</td>
+                  <td className="px-3 py-2">Total sales</td>
                   <td className="border-l border-gray-200" />
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">
@@ -585,11 +578,9 @@ export default function SummaryPage() {
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> MTD below {lastMonthMtdLabel}</span>
           <span>· Avg Order Value = value ÷ orders — “per {data.meta.single ? "day" : "range"}” uses {periodLabel}, “per month” uses month to date</span>
           <span>
-            · MTD Value incl. Cashback Orders counts every order at its full value, an order paid with a voucher
-            included at what it was worth. Nothing is deducted; the only adjustment is upward and only online, because
-            Shopify applies a cashback code as a discount and the order arrives already reduced. Odoo leaves the
-            redemption line out of its feed, so a branch order is already at full value. The products table ends on the
-            same figure.
+            · Every order counts at its full value, a voucher-paid one included. Only the website needs adjusting:
+            Shopify treats a cashback code as a discount, so its orders arrive already reduced and the voucher is put
+            back. Shop orders already carry their full value.
           </span>
           <span>
             · Cashback rows count the orders that paid with a voucher, on the day the order was placed: how many, how
