@@ -165,37 +165,6 @@ export default function SummaryPage() {
     [data]
   );
 
-  // Cashback spent in the period, reshaped for the products footer: the
-  // website column is online, every branch column together is offline.
-  const cashbackSplit = useMemo(() => {
-    const spent = data?.cashback?.spent;
-    const total = spent?.Total?.value ?? 0;
-    const online = spent?.Website?.value ?? 0;
-    return { offline: total - online, online, total };
-  }, [data]);
-
-  const mtdPlusCashback: Block = useMemo(() => {
-    const out: Block = {};
-    if (data) {
-      // Every order at its full value, an order paid with a voucher included
-      // at what it was worth rather than what was collected. Nothing is taken
-      // off; the only adjustment is upward, and only online.
-      //
-      // Shopify applies a cashback code as a discount, so an online order
-      // arrives already reduced and has to be put back. Odoo leaves the
-      // redemption line out of its feed (it is filed under category "All",
-      // which the NS Home filter drops), so a branch order is already at full
-      // value and adding anything would count the voucher twice.
-      const web = data.cashback?.spent?.Website?.value ?? 0;
-      for (const c of cols) {
-        const v = data.mtd[c]?.value ?? 0;
-        const add = c === "Website" || c === "Total" ? web : 0;
-        out[c] = { orders: 0, value: v + add };
-      }
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
 
   return (
     <div>
@@ -511,23 +480,6 @@ export default function SummaryPage() {
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Math.round(data.productsNet.total))}</td>
-                  <td className="border-l border-gray-200" />
-                </tr>
-                <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
-                  <td className="px-3 py-2">Total sales</td>
-                  <td className="border-l border-gray-200" />
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.offline))}
-                  </td>
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.online + cashbackSplit.online))}
-                  </td>
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtNum(Math.round(data.productsNet.total + cashbackSplit.online))}
-                  </td>
                   <td className="border-l border-gray-200" />
                 </tr>
               </tfoot>
