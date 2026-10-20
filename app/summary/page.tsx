@@ -359,17 +359,6 @@ export default function SummaryPage() {
                 tint={TINT.cashback}
               />
 
-              <GroupGap cols={cols} />
-
-              {/* On its own below the cashback block: the month's takings with
-                  the vouchers spent on them added back. */}
-              <DataRow
-                label="MTD Total Sales"
-                cols={cols}
-                block={mtdPlusCashback}
-                kind="value"
-                tint={TINT.mtd}
-              />
             </tbody>
           </table>
         </div>
@@ -522,30 +511,6 @@ export default function SummaryPage() {
                   </td>
                   <td className="border-l border-gray-200" />
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Math.round(data.productsNet.total))}</td>
-                  <td className="border-l border-gray-200" />
-                </tr>
-                {/* Part of what is left was settled with a voucher rather than
-                    cash, so less money came in than the line above suggests.
-                    Same arithmetic as Paid After Cashback in the table, taken
-                    down to the products. */}
-                <tr className="text-[11px] text-emerald-700">
-                  <td className="px-3 py-1.5 text-gray-500">Website cashback, added back</td>
-                  <td className="border-l border-gray-200" />
-                  <td className="border-l border-gray-200" />
-                  <td
-                    className="px-3 py-1.5 text-right tabular-nums text-gray-400"
-                    title="Odoo leaves the voucher line out, so a shop order is already at its full value"
-                  >
-                    {cashbackSplit.offline ? `(${fmtNum(Math.round(cashbackSplit.offline))})` : "—"}
-                  </td>
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-1.5 text-right tabular-nums">
-                    {cashbackSplit.online ? `+${fmtNum(Math.round(cashbackSplit.online))}` : "—"}
-                  </td>
-                  <td className="border-l border-gray-200" />
-                  <td className="px-3 py-1.5 text-right tabular-nums">
-                    {cashbackSplit.online ? `+${fmtNum(Math.round(cashbackSplit.online))}` : "—"}
-                  </td>
                   <td className="border-l border-gray-200" />
                 </tr>
                 <tr className="border-t border-[#d8c3aa] text-xs font-bold text-gray-900">
