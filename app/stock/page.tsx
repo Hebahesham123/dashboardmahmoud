@@ -326,7 +326,10 @@ stock now · sold in the last {data.window.days} days
           <section className="overflow-hidden rounded-xl border border-[#e7e2dc] bg-white">
             <div className="flex items-baseline justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <h2 className="text-sm font-bold text-gray-900">Products</h2>
-              <p className="text-[11px] text-gray-400">{fmtNum(data.products.length)} live on the website</p>
+              <div className="flex items-center gap-3">
+                <p className="text-[11px] text-gray-400">{fmtNum(data.products.length)} live on the website</p>
+                <ExportButton products={data.products} from={data.window.from} to={data.window.to} room={room} />
+              </div>
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               <table className="w-full table-fixed border-collapse text-left text-xs">
@@ -350,8 +353,178 @@ stock now · sold in the last {data.window.days} days
                 </thead>
                 <tbody>
                   {data.products.map((p) => (
-                    <tr key={p.product_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                    <ProductRows
+                      key={p.product_id}
+                      p={p}
+                      from={data.window.from}
+                      to={data.window.to}
+                      currency={currency}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <p className="px-1 text-[11px] leading-relaxed text-gray-400">
+            Stock is what the website holds right now, taken from the Shopify products — a snapshot, not a history, so
+            it does not move with the period above. Draft products are counted too, marked as such: 54 retail products
+            sit unpublished holding 537 pieces, and stock on an unpublished product is still stock. Sold counts online
+            sales over the period and includes anything returned or refunded — the figure is what left the shelf, with
+            the returned count beside it in red. Click a product to see its variants; their sold figures come from the
+            Shopify orders (cancelled ones left out), so they can differ slightly from the product line.
+            {loading && <span className="ml-1">· Refreshing…</span>}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface VariantRow {
+  variant_id: number;
+  title: string;
+  sku: string | null;
+  barcode: string | null;
+  price: number;
+  stock: number;
+  sold: number;
+  soldValue: number;
+}
+
+/** Excel drops leading zeros and turns long barcodes into 1.2E+12 unless told it is text. */
+const csvText = (s: string | null | undefined) => (s ? `="${s.replace(/"/g, '""')}"` : "");
+const csvCell = (v: string | number) => {
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+/** Every product in the table, each followed by its variants, as a CSV download. */
+async function exportProducts(products: ProductRow[], from: string, to: string, room: string) {
+  const ids = products.map((p) => p.product_id).join(",");
+  const r = await fetch(`/api/stock/variants?${new URLSearchParams({ from, to, ids })}`);
+  const j = (await r.json()) as { ok: boolean; error?: string; byProduct?: Record<string, VariantRow[]> };
+  if (!j.ok) throw new Error(j.error || "Export failed");
+  const byProduct = j.byProduct ?? {};
+
+  const lines: string[] = [
+    ["Product", "Variant", "Type", "Status", "SKU", "Barcode", "Price", "Sold", "Sold value", "In stock"].join(","),
+  ];
+  for (const p of products) {
+    lines.push(
+      [
+        csvCell(p.title),
+        "",
+        csvCell(p.label),
+        p.status,
+        "",
+        "",
+        Math.round(p.price),
+        Math.round(p.sold),
+        p.soldValue.toFixed(2),
+        p.stock,
+      ].join(",")
+    );
+    for (const v of byProduct[String(p.product_id)] ?? []) {
+      lines.push(
+        [
+          csvCell(p.title),
+          csvCell(v.title === "Default Title" ? "" : v.title),
+          csvCell(p.label),
+          p.status,
+          csvText(v.sku),
+          csvText(v.barcode),
+          Math.round(v.price),
+          v.sold,
+          v.soldValue.toFixed(2),
+          v.stock,
+        ].join(",")
+      );
+    }
+  }
+
+  // The BOM makes Excel read it as UTF-8.
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `stock-${room ? room.replace(/\s+/g, "-").toLowerCase() + "-" : ""}${from}_to_${to}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function ExportButton({ products, from, to, room }: { products: ProductRow[]; from: string; to: string; room: string }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <span className="flex items-center gap-2">
+      {err && <span className="text-[11px] text-rose-600">{err}</span>}
+      <button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            await exportProducts(products, from, to, room);
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="rounded-lg border border-[#ddd6cd] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6f4423] hover:bg-[#faf7f3] disabled:opacity-50"
+      >
+        {busy ? "Exporting…" : "Export CSV"}
+      </button>
+    </span>
+  );
+}
+
+/** A product line that opens to show its variants, loaded the first time it is opened. */
+function ProductRows({ p, from, to, currency }: { p: ProductRow; from: string; to: string; currency: string }) {
+  const [open, setOpen] = useState(false);
+  const [variants, setVariants] = useState<VariantRow[] | null>(null);
+  const [loadedFor, setLoadedFor] = useState("");
+  const [vLoading, setVLoading] = useState(false);
+  const [vError, setVError] = useState<string | null>(null);
+  const windowKey = `${from}|${to}`;
+
+  useEffect(() => {
+    if (!open || loadedFor === windowKey) return;
+    let alive = true;
+    setVLoading(true);
+    setVError(null);
+    fetch(`/api/stock/variants?${new URLSearchParams({ product_id: String(p.product_id), from, to })}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return;
+        if (j.ok) {
+          setVariants(j.variants);
+          setLoadedFor(windowKey);
+        } else setVError(j.error || "Failed to load variants");
+      })
+      .catch((e) => alive && setVError(e instanceof Error ? e.message : String(e)))
+      .finally(() => alive && setVLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [open, windowKey, loadedFor, p.product_id, from, to]);
+
+  return (
+    <>
+      <tr
+        onClick={() => setOpen((o) => !o)}
+        className={`cursor-pointer border-b border-gray-100 hover:bg-gray-50 ${open ? "bg-[#faf7f3]" : ""}`}
+      >
                       <td className="truncate px-3 py-1.5 text-gray-800" title={p.title}>
+                        <span
+                          className={`mr-1.5 inline-block w-3 text-[9px] text-gray-400 transition-transform ${
+                            open ? "rotate-90" : ""
+                          }`}
+                        >
+                          ▶
+                        </span>
                         {p.title}
                         {p.status === "draft" && (
                           <span
@@ -384,24 +557,48 @@ stock now · sold in the last {data.window.days} days
                       >
                         {p.stock <= 0 ? "out" : fmtNum(p.stock)}
                       </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <p className="px-1 text-[11px] leading-relaxed text-gray-400">
-            Stock is what the website holds right now, taken from the Shopify products — a snapshot, not a history, so
-            it does not move with the period above. Draft products are counted too, marked as such: 54 retail products
-            sit unpublished holding 537 pieces, and stock on an unpublished product is still stock. Sold counts online
-            sales over the period and includes anything returned or refunded — the figure is what left the shelf, with
-            the returned count beside it in red.
-            {loading && <span className="ml-1">· Refreshing…</span>}
-          </p>
-        </div>
+      </tr>
+      {open && (vLoading || vError || !variants) && (
+        <tr className="border-b border-gray-100 bg-[#fdfbf8]">
+          <td colSpan={6} className={`px-3 py-2 pl-9 text-[11px] ${vError ? "text-rose-600" : "text-gray-400"}`}>
+            {vError ?? "Loading variants…"}
+          </td>
+        </tr>
       )}
-    </div>
+      {open &&
+        !vLoading &&
+        !vError &&
+        variants?.map((v) => (
+          <tr key={v.variant_id} className="border-b border-gray-100 bg-[#fdfbf8] text-[11px]">
+            <td className="truncate py-1.5 pl-9 pr-3 text-gray-700" title={v.title}>
+              {v.title === "Default Title" ? "—" : v.title}
+            </td>
+            <td
+              className="truncate px-3 py-1.5 tabular-nums text-gray-500"
+              title={`SKU ${v.sku ?? "—"} · Barcode ${v.barcode ?? "—"}`}
+            >
+              <span className="text-gray-400">SKU</span> {v.sku ?? "—"}
+              <span className="ml-2 text-gray-400">Barcode</span> {v.barcode ?? "—"}
+            </td>
+            <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">
+              {v.price ? fmtNum(Math.round(v.price)) : <span className="text-gray-300">—</span>}
+            </td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
+              {v.sold ? fmtNum(v.sold) : <span className="text-gray-300">—</span>}
+            </td>
+            <td className="truncate px-3 py-1.5 text-right tabular-nums text-gray-600">
+              {v.soldValue ? fmtMoney(v.soldValue, currency) : <span className="text-gray-300">—</span>}
+            </td>
+            <td
+              className={`px-3 py-1.5 text-right tabular-nums ${
+                v.stock <= 0 ? "font-medium text-rose-600" : "font-medium text-gray-800"
+              }`}
+            >
+              {v.stock <= 0 ? "out" : fmtNum(v.stock)}
+            </td>
+          </tr>
+        ))}
+    </>
   );
 }
 

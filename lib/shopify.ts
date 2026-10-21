@@ -474,6 +474,75 @@ export function toItemRows(o: ShopifyOrder) {
   }));
 }
 
+export interface StockVariant {
+  variant_id: number;
+  title: string;
+  sku: string | null;
+  barcode: string | null;
+  price: number;
+  stock: number;
+}
+
+interface RawVariant {
+  id: number;
+  title: string;
+  sku: string | null;
+  barcode?: string | null;
+  price: string;
+  inventory_quantity?: number;
+}
+
+const toStockVariant = (v: RawVariant): StockVariant => ({
+  variant_id: v.id,
+  title: (v.title ?? "").trim(),
+  sku: (v.sku ?? "").trim() || null,
+  barcode: (v.barcode ?? "").trim() || null,
+  price: Number(v.price || 0),
+  // Same rule as the product total: an oversold count holds nothing.
+  stock: Math.max(0, v.inventory_quantity ?? 0),
+});
+
+/** GET from Shopify, waiting and retrying when it says to slow down (2 calls a second). */
+async function shopifyGet(url: string, token: string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+    if (res.status !== 429 || attempt >= 5) return res;
+    const wait = Number(res.headers.get("Retry-After") || "1");
+    await new Promise((r) => setTimeout(r, Math.max(0.5, wait) * 1000));
+  }
+}
+
+/** One product's variants with their own stock and price, live from Shopify. */
+export async function fetchProductVariants(productId: number): Promise<StockVariant[]> {
+  const { token, base } = shopifyConfig();
+  const res = await shopifyGet(`${base}/products/${productId}.json?fields=id,variants`, token);
+  if (!res.ok) throw new Error(`Shopify product ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const j = (await res.json()) as { product: { variants: RawVariant[] } };
+  return (j.product?.variants ?? []).map(toStockVariant);
+}
+
+/** The variants of the products asked for, keyed by product id — for the export. */
+export async function fetchVariantsFor(ids: number[]): Promise<Map<number, StockVariant[]>> {
+  const { token, base } = shopifyConfig();
+  const out = new Map<number, StockVariant[]>();
+  const unique = [...new Set(ids.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 250) {
+    const params = new URLSearchParams({
+      ids: unique.slice(i, i + 250).join(","),
+      limit: "250",
+      fields: "id,variants",
+    });
+    const res = await shopifyGet(`${base}/products.json?${params}`, token);
+    if (!res.ok) throw new Error(`Shopify products ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const j = (await res.json()) as { products: { id: number; variants: RawVariant[] }[] };
+    for (const p of j.products ?? []) out.set(p.id, (p.variants ?? []).map(toStockVariant));
+  }
+  return out;
+}
+
 export interface StockProduct {
   product_id: number;
   title: string;
