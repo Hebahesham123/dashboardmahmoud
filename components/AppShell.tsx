@@ -25,6 +25,7 @@ const NAV: NavItem[] = [
   { href: "/offline", label: "Offline (Odoo)", icon: "🏬" },
   { href: "/products", label: "Products", icon: "🛍️" },
   { href: "/stock", label: "Stock", icon: "📦" },
+  { href: "/performance-meta", label: "Performance Meta", icon: "📣" },
   { href: "/abandoned", label: "Abandoned Carts", icon: "🛒" },
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
