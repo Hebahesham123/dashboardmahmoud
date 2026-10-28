@@ -356,6 +356,9 @@ export function toOrderRow(o: ShopifyOrder) {
 }
 
 interface ShopifyAddress {
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   phone?: string | null;
   address1?: string | null;
   address2?: string | null;

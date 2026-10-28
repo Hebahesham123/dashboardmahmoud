@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runSync } from "@/lib/sync";
+import { saveAbandonedCheckouts } from "@/lib/abandoned";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow long syncs (Vercel Pro); free tier caps at 60s
@@ -30,7 +31,10 @@ async function handle(req: NextRequest) {
 
   try {
     const result = await runSync(full);
-    return NextResponse.json({ ok: true, ...result });
+    // Keep abandoned checkouts past Shopify's ~3 months, for the WhatsApp
+    // sheets. Its own failure shouldn't fail the order sync.
+    const abandoned = await saveAbandonedCheckouts().catch((e) => ({ error: (e as Error).message }));
+    return NextResponse.json({ ok: true, ...result, abandoned });
   } catch (err) {
     console.error("sync failed", err);
     return NextResponse.json(

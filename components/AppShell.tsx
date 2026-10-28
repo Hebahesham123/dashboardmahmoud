@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { href: "/stock", label: "Stock", icon: "📦" },
   { href: "/performance-meta", label: "Performance Meta", icon: "📣" },
   { href: "/abandoned", label: "Abandoned Carts", icon: "🛒" },
+  { href: "/whatsapp-campaigns", label: "WhatsApp Campaigns", icon: "💬" },
   { href: "/order", label: "Create Order", icon: "🧾" },
   { href: "/compare", label: "Compare", icon: "⚖️" },
   { href: "/import", label: "Import Data", icon: "⬆️" },
@@ -45,6 +46,7 @@ const OWN_FILTER: Record<string, string> = {
   "/summary": "Summary",
   "/insights": "Insights",
   "/stock": "Stock",
+  "/whatsapp-campaigns": "WhatsApp Campaigns",
 };
 
 // Routes a call-center user may open (anything else → /abandoned).
