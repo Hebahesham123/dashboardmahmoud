@@ -72,7 +72,12 @@ const TINT = {
   lastMonth: "bg-[#7a3f5d]", // the same window one month back
   mtd: "bg-[#2f5d5b]", // month to date
   cashback: "bg-[#4d6b2f]", // orders that paid with a voucher
+  target: "bg-[#1f4e79]", // monthly target and how much of it MTD covers
 } as const;
+
+// Monthly sales targets: every branch (offline) has the same target, online has its own.
+const BRANCH_TARGET = 500_000;
+const ONLINE_TARGET = 1_000_000;
 
 export default function SummaryPage() {
   const [mode, setMode] = useState<"day" | "range">("day");
@@ -148,6 +153,29 @@ export default function SummaryPage() {
   const aovLastMonth: Block = useMemo(() => aovOf(data?.lastMonth), [data]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aovLastMonthMtd: Block = useMemo(() => aovOf(data?.lastMonthMtd), [data]);
+
+  // Monthly target per column (Total = sum of all targets), what is left to
+  // reach it, and the % of it that MTD Value covers.
+  const targets = useMemo(() => {
+    const target: Block = {};
+    const remaining: Block = {};
+    const pct: Record<string, number> = {};
+    if (!data) return { target, remaining, pct };
+    let total = 0;
+    for (const ch of data.channels) {
+      const t = ch.type === "Online" ? ONLINE_TARGET : BRANCH_TARGET;
+      target[ch.label] = { orders: 0, value: t };
+      total += t;
+    }
+    target.Total = { orders: 0, value: total };
+    for (const c of Object.keys(target)) {
+      const achieved = data.mtd[c]?.value ?? 0;
+      const t = target[c].value;
+      remaining[c] = { orders: 0, value: Math.max(t - achieved, 0) };
+      pct[c] = t ? (achieved / t) * 100 : 0;
+    }
+    return { target, remaining, pct };
+  }, [data]);
 
   // MTD Value plus the Cashback Used row exactly as it appears above, so the
   // sum can be checked against the table. It used the whole month's cashback
@@ -301,6 +329,20 @@ export default function SummaryPage() {
                 accent
                 tint={TINT.mtd}
               />
+
+              <GroupGap cols={cols} />
+
+              {/* Monthly target: 500k per branch, 1M online, and how much MTD covers. */}
+              <DataRow
+                label={<>Monthly Target <span className="font-normal opacity-80">branch 500k · online 1M</span></>}
+                cols={cols}
+                block={targets.target}
+                kind="value"
+                tint={TINT.target}
+              />
+              <DataRow label="Achieved (MTD Value)" cols={cols} block={data.mtd} kind="value" tint={TINT.target} />
+              <PercentRow label="% of Target Achieved" cols={cols} pct={targets.pct} tint={TINT.target} />
+              <DataRow label="Remaining to Target" cols={cols} block={targets.remaining} kind="value" muted tint={TINT.target} />
 
               <GroupGap cols={cols} />
 
@@ -512,6 +554,11 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.lastMonth}`} /> last month
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.mtd}`} /> month to date
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.cashback}`} /> cashback
+            <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.target}`} /> target
+          </span>
+          <span>
+            · Target: {fmtNum(BRANCH_TARGET)} per branch, {fmtNum(ONLINE_TARGET)} online, per month. % = MTD Value ÷
+            target — green at 100%+, amber at 50%+, red below 50%
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>
@@ -603,6 +650,38 @@ function DataRow({
         return (
           <td key={c} className={`${BORDER} px-1 py-2.5 font-medium tabular-nums sm:px-3 ${cls}`}>
             {kind === "orders" ? fmtNum(v) : money(v)}
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
+
+/** % of the monthly target reached, coloured by how close it is. */
+function PercentRow({
+  label,
+  cols,
+  pct,
+  tint,
+}: {
+  label: React.ReactNode;
+  cols: string[];
+  pct: Record<string, number>;
+  tint: string;
+}) {
+  return (
+    <tr>
+      <th className={`${BORDER} ${tint} px-2 py-2.5 text-left align-middle font-semibold text-white sm:px-4`}>{label}</th>
+      {cols.map((c) => {
+        const p = pct[c] ?? 0;
+        const isTotal = c === "Total";
+        let cls: string;
+        if (p >= 100) cls = isTotal ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700";
+        else if (p >= 50) cls = isTotal ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700";
+        else cls = isTotal ? "bg-rose-600 text-white" : "bg-rose-50 text-rose-700";
+        return (
+          <td key={c} className={`${BORDER} px-1 py-2.5 font-bold tabular-nums sm:px-3 ${cls}`}>
+            {p.toFixed(1)}%
           </td>
         );
       })}
