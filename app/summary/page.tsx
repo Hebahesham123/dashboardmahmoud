@@ -75,8 +75,7 @@ const TINT = {
   target: "bg-[#1f4e79]", // monthly target and how much of it MTD covers
 } as const;
 
-// Default monthly sales targets, used for any channel that has no saved target
-// yet. Each branch and online can be given its own via "Edit targets".
+// Monthly sales targets: every branch (offline) has the same target, online has its own.
 const BRANCH_TARGET = 500_000;
 const ONLINE_TARGET = 1_000_000;
 
@@ -88,16 +87,6 @@ export default function SummaryPage() {
   const [data, setData] = useState<SummaryResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Saved targets per channel label; channels missing here use the defaults.
-  const [savedTargets, setSavedTargets] = useState<Record<string, number>>({});
-  const [editingTargets, setEditingTargets] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/targets")
-      .then((r) => r.json())
-      .then((j: { ok: boolean; targets?: Record<string, number> }) => j.ok && setSavedTargets(j.targets ?? {}))
-      .catch(() => {});
-  }, []);
 
   const query = useMemo(
     () => (mode === "day" ? `day=${day}` : `from=${from}&to=${to}`),
@@ -174,7 +163,7 @@ export default function SummaryPage() {
     if (!data) return { target, remaining, pct };
     let total = 0;
     for (const ch of data.channels) {
-      const t = savedTargets[ch.label] ?? (ch.type === "Online" ? ONLINE_TARGET : BRANCH_TARGET);
+      const t = ch.type === "Online" ? ONLINE_TARGET : BRANCH_TARGET;
       target[ch.label] = { orders: 0, value: t };
       total += t;
     }
@@ -186,7 +175,7 @@ export default function SummaryPage() {
       pct[c] = t ? (achieved / t) * 100 : 0;
     }
     return { target, remaining, pct };
-  }, [data, savedTargets]);
+  }, [data]);
 
   // MTD Value plus the Cashback Used row exactly as it appears above, so the
   // sum can be checked against the table. It used the whole month's cashback
@@ -244,30 +233,7 @@ export default function SummaryPage() {
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
           </div>
         )}
-
-        {data && (
-          <button
-            onClick={() => setEditingTargets((v) => !v)}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-medium sm:ml-auto ${
-              editingTargets ? "border-[#1f4e79] bg-[#1f4e79] text-white" : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            🎯 Edit targets
-          </button>
-        )}
       </div>
-
-      {data && editingTargets && (
-        <TargetEditor
-          channels={data.channels}
-          current={(label, type) => savedTargets[label] ?? (type === "Online" ? ONLINE_TARGET : BRANCH_TARGET)}
-          onSaved={(t) => {
-            setSavedTargets((prev) => ({ ...prev, ...t }));
-            setEditingTargets(false);
-          }}
-          onCancel={() => setEditingTargets(false)}
-        />
-      )}
 
       {error && (
         <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
@@ -368,7 +334,7 @@ export default function SummaryPage() {
 
               {/* Monthly target: 500k per branch, 1M online, and how much MTD covers. */}
               <DataRow
-                label={<>Monthly Target <span className="font-normal opacity-80">editable · 🎯 Edit targets</span></>}
+                label={<>Monthly Target <span className="font-normal opacity-80">branch 500k · online 1M</span></>}
                 cols={cols}
                 block={targets.target}
                 kind="value"
@@ -591,8 +557,7 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.target}`} /> target
           </span>
           <span>
-            · Monthly target per column, set with “Edit targets” (default {fmtNum(BRANCH_TARGET)} a branch,{" "}
-            {fmtNum(ONLINE_TARGET)} online). % = MTD Value ÷
+            · Target: {fmtNum(BRANCH_TARGET)} per branch, {fmtNum(ONLINE_TARGET)} online, per month. % = MTD Value ÷
             target — green at 100%+, amber at 50%+, red below 50%
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
@@ -689,94 +654,6 @@ function DataRow({
         );
       })}
     </tr>
-  );
-}
-
-/** One input per branch and online; saves to /api/targets for everyone. */
-function TargetEditor({
-  channels,
-  current,
-  onSaved,
-  onCancel,
-}: {
-  channels: { label: string; type: "Branches" | "Online" }[];
-  current: (label: string, type: "Branches" | "Online") => number;
-  onSaved: (t: Record<string, number>) => void;
-  onCancel: () => void;
-}) {
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(channels.map((c) => [c.label, String(current(c.label, c.type))]))
-  );
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const parsed: Record<string, number> = {};
-  for (const c of channels) parsed[c.label] = Number((values[c.label] ?? "").replace(/,/g, "").trim());
-  const invalid = channels.some(
-    (c) => (values[c.label] ?? "").trim() === "" || !Number.isFinite(parsed[c.label]) || parsed[c.label] < 0
-  );
-  const total = channels.reduce((a, c) => a + (Number.isFinite(parsed[c.label]) ? parsed[c.label] : 0), 0);
-
-  const save = async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/targets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targets: parsed }),
-      });
-      const j = (await r.json()) as { ok: boolean; error?: string };
-      if (!j.ok) throw new Error(j.error || "Could not save targets");
-      onSaved(parsed);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="mb-5 rounded-xl border-2 border-[#1f4e79] bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-bold text-gray-900">Monthly targets (EGP)</h2>
-        <span className="text-[11px] text-gray-500">Saved for everyone · Total {fmtNum(Math.round(total))}</span>
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {channels.map((c) => (
-          <label key={c.label} className="block text-xs">
-            <span className="mb-1 block font-semibold text-gray-700">
-              {c.label} <span className="font-normal text-gray-400">· {c.type === "Online" ? "Online" : "Branch"}</span>
-            </span>
-            <input
-              type="number"
-              min={0}
-              step={10000}
-              inputMode="numeric"
-              value={values[c.label] ?? ""}
-              onChange={(e) => setValues((v) => ({ ...v, [c.label]: e.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm tabular-nums focus:border-[#1f4e79] focus:outline-none"
-            />
-          </label>
-        ))}
-      </div>
-      {err && <p className="mt-3 text-xs text-rose-600">{err}</p>}
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={save}
-          disabled={saving || invalid}
-          className="rounded-lg bg-[#1f4e79] px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Save targets"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
   );
 }
 
