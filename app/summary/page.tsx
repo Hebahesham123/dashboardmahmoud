@@ -75,9 +75,29 @@ const TINT = {
   target: "bg-[#1f4e79]", // monthly target and how much of it MTD covers
 } as const;
 
-// Monthly sales targets: every branch (offline) has the same target, online has its own.
+// Default monthly sales targets, used until someone types their own into the
+// Monthly Target row. Every branch has the same default, online has its own.
 const BRANCH_TARGET = 500_000;
 const ONLINE_TARGET = 1_000_000;
+const TARGETS_KEY = "summary-targets"; // browser fallback before migration_v18 is run
+
+/** Days in the month that a YYYY-MM-DD date falls in. */
+function daysInMonthOf(day: string): number {
+  const [y, m] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+/** Every date from `from` to `to`, inclusive. */
+function eachDay(from: string, to: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  for (let guard = 0; d <= end && guard < 1000; guard++) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
 
 export default function SummaryPage() {
   const [mode, setMode] = useState<"day" | "range">("day");
@@ -87,6 +107,48 @@ export default function SummaryPage() {
   const [data, setData] = useState<SummaryResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Monthly targets someone typed in, by column label. Missing = default.
+  const [savedTargets, setSavedTargets] = useState<Record<string, number>>({});
+  const [targetNote, setTargetNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let local: Record<string, number> = {};
+    try {
+      local = JSON.parse(localStorage.getItem(TARGETS_KEY) || "{}");
+    } catch {
+      /* no browser storage */
+    }
+    fetch("/api/targets")
+      .then((r) => r.json())
+      .then((j: { targets?: Record<string, number> }) => setSavedTargets({ ...local, ...(j.targets ?? {}) }))
+      .catch(() => setSavedTargets(local));
+  }, []);
+
+  // Saves one column's target. It goes to Supabase so everyone sees it; if the
+  // table is not there yet it is kept in this browser and the page says so.
+  const saveTarget = async (label: string, value: number) => {
+    const next = { ...savedTargets, [label]: value };
+    setSavedTargets(next);
+    try {
+      const r = await fetch("/api/targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targets: { [label]: value } }),
+      });
+      const j = (await r.json()) as { ok: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error || "Could not save");
+      setTargetNote(`Saved ${label}: ${fmtNum(value)}`);
+    } catch (e) {
+      try {
+        localStorage.setItem(TARGETS_KEY, JSON.stringify(next));
+      } catch {
+        /* no browser storage */
+      }
+      setTargetNote(
+        `Saved in this browser only — ${e instanceof Error ? e.message : "server save failed"}`
+      );
+    }
+  };
 
   const query = useMemo(
     () => (mode === "day" ? `day=${day}` : `from=${from}&to=${to}`),
@@ -156,14 +218,23 @@ export default function SummaryPage() {
 
   // Monthly target per column (Total = sum of all targets), what is left to
   // reach it, and the % of it that MTD Value covers.
+  //
+  // The monthly target is also turned into a target for the picked day or
+  // range: target ÷ days in that month, for each day picked. A range that
+  // crosses two months uses each month's own daily figure.
   const targets = useMemo(() => {
     const target: Block = {};
     const remaining: Block = {};
     const pct: Record<string, number> = {};
-    if (!data) return { target, remaining, pct };
+    const perDay: Block = {};
+    const periodTarget: Block = {};
+    const periodPct: Record<string, number> = {};
+    if (!data) return { target, remaining, pct, perDay, periodTarget, periodPct, days: 0 };
+    const days = eachDay(data.meta.from, data.meta.to);
+    const refMonthDays = daysInMonthOf(data.meta.to);
     let total = 0;
     for (const ch of data.channels) {
-      const t = ch.type === "Online" ? ONLINE_TARGET : BRANCH_TARGET;
+      const t = savedTargets[ch.label] ?? (ch.type === "Online" ? ONLINE_TARGET : BRANCH_TARGET);
       target[ch.label] = { orders: 0, value: t };
       total += t;
     }
@@ -173,9 +244,14 @@ export default function SummaryPage() {
       const t = target[c].value;
       remaining[c] = { orders: 0, value: Math.max(t - achieved, 0) };
       pct[c] = t ? (achieved / t) * 100 : 0;
+
+      perDay[c] = { orders: 0, value: t / refMonthDays };
+      const pt = days.reduce((a, d) => a + t / daysInMonthOf(d), 0);
+      periodTarget[c] = { orders: 0, value: pt };
+      periodPct[c] = pt ? ((data.period[c]?.value ?? 0) / pt) * 100 : 0;
     }
-    return { target, remaining, pct };
-  }, [data]);
+    return { target, remaining, pct, perDay, periodTarget, periodPct, days: days.length };
+  }, [data, savedTargets]);
 
   // MTD Value plus the Cashback Used row exactly as it appears above, so the
   // sum can be checked against the table. It used the whole month's cashback
@@ -332,17 +408,50 @@ export default function SummaryPage() {
 
               <GroupGap cols={cols} />
 
-              {/* Monthly target: 500k per branch, 1M online, and how much MTD covers. */}
-              <DataRow
-                label={<>Monthly Target <span className="font-normal opacity-80">branch 500k · online 1M</span></>}
+              {/* Monthly target — typed in per column — and how much MTD covers. */}
+              <TargetInputRow
+                label={<>Monthly Target <span className="font-normal opacity-80">click a number to change it</span></>}
                 cols={cols}
                 block={targets.target}
-                kind="value"
+                onSave={saveTarget}
                 tint={TINT.target}
               />
-              <DataRow label="Achieved (MTD Value)" cols={cols} block={data.mtd} kind="value" tint={TINT.target} />
-              <PercentRow label="% of Target Achieved" cols={cols} pct={targets.pct} tint={TINT.target} />
-              <DataRow label="Remaining to Target" cols={cols} block={targets.remaining} kind="value" muted tint={TINT.target} />
+              <PercentRow
+                label={<>% of Monthly Target <span className="font-normal opacity-80">click a % to see how</span></>}
+                cols={cols}
+                pct={targets.pct}
+                tint={TINT.target}
+                details={(c) => (
+                  <Calc
+                    name={c === "Total" ? "All channels" : c}
+                    achievedLabel={`Achieved this month (MTD Value, ${data.meta.to.slice(0, 8)}01 → ${data.meta.to})`}
+                    achieved={data.mtd[c]?.value ?? 0}
+                    targetLabel={c === "Total" ? "Monthly target (sum of all columns)" : "Monthly target"}
+                    target={targets.target[c]?.value ?? 0}
+                  />
+                )}
+              />
+
+              {/* The day/range share of the target, worked out from the monthly one. */}
+              <PercentRow
+                label={<>% of {data.meta.single ? "Day" : "Period"} Target <span className="font-normal opacity-80">{periodLabel}</span></>}
+                cols={cols}
+                pct={targets.periodPct}
+                tint={TINT.target}
+                details={(c) => (
+                  <Calc
+                    name={c === "Total" ? "All channels" : c}
+                    achievedLabel={`Achieved (Value, ${periodLabel})`}
+                    achieved={data.period[c]?.value ?? 0}
+                    targetLabel={
+                      targets.days === 1
+                        ? `Day target (monthly ${money(targets.target[c]?.value ?? 0)} ÷ ${daysInMonthOf(data.meta.to)} days)`
+                        : `Target for ${targets.days} days (monthly target ÷ days in the month, × ${targets.days} days)`
+                    }
+                    target={targets.periodTarget[c]?.value ?? 0}
+                  />
+                )}
+              />
 
               <GroupGap cols={cols} />
 
@@ -557,8 +666,12 @@ export default function SummaryPage() {
             <span className={`ml-1 inline-block h-2.5 w-2.5 rounded-sm ${TINT.target}`} /> target
           </span>
           <span>
-            · Target: {fmtNum(BRANCH_TARGET)} per branch, {fmtNum(ONLINE_TARGET)} online, per month. % = MTD Value ÷
-            target — green at 100%+, amber at 50%+, red below 50%
+            · Target: type a number into the Monthly Target row to change a column (default {fmtNum(BRANCH_TARGET)} per
+            branch, {fmtNum(ONLINE_TARGET)} online). % = MTD Value ÷ target — green at 100%+, amber at 50%+, red below
+            50%. Target per day = monthly target ÷ days in the month; the day/range target adds up one daily target per
+            day picked, and its % is the picked day/range Value ÷ that target. Click any % to see its sum and what is
+            still needed.
+            {targetNote && <b className="ml-1 font-semibold text-[#1f4e79]">{targetNote}</b>}
           </span>
           {loading && <span className="text-gray-400">· Refreshing…</span>}
         </div>
@@ -657,35 +770,178 @@ function DataRow({
   );
 }
 
-/** % of the monthly target reached, coloured by how close it is. */
-function PercentRow({
+/**
+ * The Monthly Target row, with each column typed in place. Saves on Enter or
+ * when the box loses focus. Total is the sum and is not editable.
+ */
+function TargetInputRow({
   label,
   cols,
-  pct,
+  block,
+  onSave,
   tint,
 }: {
   label: React.ReactNode;
   cols: string[];
-  pct: Record<string, number>;
+  block: Block;
+  onSave: (label: string, value: number) => void;
   tint: string;
 }) {
   return (
     <tr>
       <th className={`${BORDER} ${tint} px-2 py-2.5 text-left align-middle font-semibold text-white sm:px-4`}>{label}</th>
-      {cols.map((c) => {
-        const p = pct[c] ?? 0;
-        const isTotal = c === "Total";
-        let cls: string;
-        if (p >= 100) cls = isTotal ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700";
-        else if (p >= 50) cls = isTotal ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700";
-        else cls = isTotal ? "bg-rose-600 text-white" : "bg-rose-50 text-rose-700";
-        return (
-          <td key={c} className={`${BORDER} px-1 py-2.5 font-bold tabular-nums sm:px-3 ${cls}`}>
-            {p.toFixed(1)}%
+      {cols.map((c) =>
+        c === "Total" ? (
+          <td key={c} className={`${BORDER} bg-[#e7dccb] px-1 py-2.5 font-bold tabular-nums text-[#4a2f16] sm:px-3`}>
+            {money(block[c]?.value ?? 0)}
           </td>
-        );
-      })}
+        ) : (
+          <td key={c} className={`${BORDER} bg-white p-0.5`}>
+            <TargetInput value={block[c]?.value ?? 0} onSave={(v) => onSave(c, v)} label={c} />
+          </td>
+        )
+      )}
     </tr>
+  );
+}
+
+function TargetInput({ value, onSave, label }: { value: number; onSave: (v: number) => void; label: string }) {
+  const [text, setText] = useState(fmtNum(Math.round(value)));
+  useEffect(() => setText(fmtNum(Math.round(value))), [value]);
+  const commit = () => {
+    const n = Number(text.replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(n) || text.trim() === "") return setText(fmtNum(Math.round(value)));
+    setText(fmtNum(Math.round(n)));
+    if (Math.round(n) !== Math.round(value)) onSave(Math.round(n));
+  };
+  return (
+    <input
+      inputMode="numeric"
+      aria-label={`Monthly target for ${label}`}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={(e) => e.target.select()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setText(fmtNum(Math.round(value)));
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      className="w-full min-w-0 rounded border border-dashed border-[#1f4e79]/40 bg-[#f3f7fb] px-0 py-1.5 text-center text-[11px] font-medium tabular-nums text-gray-900 sm:text-sm hover:border-[#1f4e79] focus:border-solid focus:border-[#1f4e79] focus:bg-white focus:outline-none"
+    />
+  );
+}
+
+/**
+ * % of a target reached, coloured by how close it is. Clicking a % opens a
+ * line under the row with the sum behind it; clicking again closes it.
+ */
+function PercentRow({
+  label,
+  cols,
+  pct,
+  tint,
+  details,
+}: {
+  label: React.ReactNode;
+  cols: string[];
+  pct: Record<string, number>;
+  tint: string;
+  details?: (c: string) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <>
+      <tr>
+        <th className={`${BORDER} ${tint} px-2 py-2.5 text-left align-middle font-semibold text-white sm:px-4`}>{label}</th>
+        {cols.map((c) => {
+          const p = pct[c] ?? 0;
+          const isTotal = c === "Total";
+          let cls: string;
+          if (p >= 100) cls = isTotal ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700";
+          else if (p >= 50) cls = isTotal ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700";
+          else cls = isTotal ? "bg-rose-600 text-white" : "bg-rose-50 text-rose-700";
+          return (
+            <td key={c} className={`${BORDER} p-0 font-bold tabular-nums ${cls}`}>
+              <button
+                type="button"
+                onClick={() => setOpen(open === c ? null : c)}
+                disabled={!details}
+                aria-expanded={open === c}
+                className={`w-full px-1 py-2.5 underline decoration-dotted underline-offset-4 sm:px-3 ${
+                  open === c ? "ring-2 ring-inset ring-[#1f4e79]" : ""
+                } ${details ? "cursor-pointer hover:opacity-80" : "cursor-default no-underline"}`}
+              >
+                {p.toFixed(1)}%
+              </button>
+            </td>
+          );
+        })}
+      </tr>
+      {open && details && (
+        <tr>
+          <td colSpan={cols.length + 1} className={`${BORDER} bg-[#f3f7fb] px-3 py-2.5 text-left sm:px-4`}>
+            <div className="flex items-start justify-between gap-3">
+              {details(open)}
+              <button
+                type="button"
+                onClick={() => setOpen(null)}
+                aria-label="Close"
+                className="shrink-0 rounded px-2 text-gray-500 hover:bg-white hover:text-gray-800"
+              >
+                ✕
+              </button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/** The sum behind a % cell: achieved ÷ target = %, and what is left. */
+function Calc({
+  name,
+  achievedLabel,
+  achieved,
+  targetLabel,
+  target,
+}: {
+  name: string;
+  achievedLabel: string;
+  achieved: number;
+  targetLabel: string;
+  target: number;
+}) {
+  const pct = target ? (achieved / target) * 100 : 0;
+  const left = target - achieved;
+  return (
+    <div className="space-y-1 text-[11px] font-normal text-gray-700 sm:text-xs">
+      <div className="font-bold text-[#1f4e79]">{name}</div>
+      <div>
+        {achievedLabel}: <b className="tabular-nums">{money(achieved)}</b>
+      </div>
+      <div>
+        {targetLabel}: <b className="tabular-nums">{money(target)}</b>
+      </div>
+      <div>
+        <b className="tabular-nums">{money(achieved)}</b> ÷ <b className="tabular-nums">{money(target)}</b> × 100 ={" "}
+        <b className="tabular-nums">{pct.toFixed(1)}%</b>
+      </div>
+      <div className="text-gray-500">
+        {left > 0 ? (
+          <>
+            Still needed to reach the target: <b className="tabular-nums">{money(left)}</b>
+          </>
+        ) : (
+          <>
+            Target passed by <b className="tabular-nums">{money(-left)}</b>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -431,6 +431,25 @@ export interface ProductSalesRow {
   returned_qty: number;  // came back, as a positive number
   returned_value: number;
   kind: "product" | "discount" | "shipping";
+  invoices: string[];    // sales invoice numbers behind the row (no credit notes)
+}
+
+/**
+ * Upserts product_sales rows. If the database has not had migration_v19 yet
+ * (no `invoices` column), writes them without it rather than failing the sync.
+ */
+export async function upsertProductSales(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: (ProductSalesRow & { updated_at: string })[]
+): Promise<void> {
+  const write = (list: object[]) => sb.from("product_sales").upsert(list, { onConflict: "day,branch,product_id" });
+  let { error } = await write(rows);
+  if (error && /invoices/i.test(error.message)) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    ({ error } = await write(rows.map(({ invoices, ...rest }) => rest)));
+  }
+  if (error) throw new Error(`product_sales upsert: ${error.message}`);
 }
 
 /**
@@ -482,6 +501,7 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
       returned_qty: 0,
       returned_value: 0,
       kind: cat ? ("product" as const) : kindOf(r.product_name),
+      invoices: [] as string[],
     };
     if (refund) {
       // Keep the sign. A credit note reverses a sale, so its contribution is
@@ -497,6 +517,8 @@ export function aggregateProductSales(rows: OdooInvoiceLine[]): ProductSalesRow[
     } else {
       e.qty += rawQty;
       e.value += rawValue;
+      const inv = (r.invoice_number ?? "").trim();
+      if (inv && !e.invoices.includes(inv)) e.invoices.push(inv);
     }
     map.set(key, e);
   }

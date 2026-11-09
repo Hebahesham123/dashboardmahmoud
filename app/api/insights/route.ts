@@ -35,7 +35,16 @@ interface Row {
   returned_qty: number;
   returned_value: number;
   kind: string; // product | discount | shipping
+  invoices?: string[]; // sales invoice numbers (migration_v19)
 }
+
+/** Distinct orders behind a set of rows: one invoice counts once, however many
+ *  of its products are in the set. */
+const ordersOf = (list: { invoices?: string[] }[]) => {
+  const s = new Set<string>();
+  for (const r of list) for (const i of r.invoices ?? []) s.add(i);
+  return s.size;
+};
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const minIso = (a: string, b: string) => (a < b ? a : b);
@@ -97,7 +106,8 @@ export async function GET(req: NextRequest) {
     // `kind` arrives with migration_v14. Before it is run the column is not
     // there and selecting it returns nothing, so fall back to the old shape
     // rather than showing an empty page.
-    let allRows = await read(`${COLS},kind`);
+    let allRows = await read(`${COLS},kind,invoices`);
+    if (allRows.length === 0) allRows = await read(`${COLS},kind`);
     // The column list grows with each migration; fall back through the older
     // shapes so the page keeps working between a deploy and its migration.
     if (allRows.length === 0)
@@ -117,6 +127,10 @@ export async function GET(req: NextRequest) {
     // for the sales totals, which is what makes those totals real sales
     // rather than a before-discount figure.
     const productRows = rows.filter((r) => (r.kind ?? "product") === "product");
+    // Order numbers exist once migration_v19 has run and the backfill has
+    // filled them. Until then order counts below are null and the page says so.
+    const hasInvoices = productRows.some((r) => (r.invoices?.length ?? 0) > 0);
+    const countOrders = (list: { invoices?: string[] }[]) => (hasInvoices ? ordersOf(list) : null);
     const sumKind = (k: string) =>
       rows.filter((r) => r.kind === k).reduce((acc, r) => acc + Number(r.value || 0), 0);
     const discountValue = sumKind("discount");
@@ -191,15 +205,29 @@ export async function GET(req: NextRequest) {
      */
     const categoryFiltered = Boolean(room || category || subcategory || priceFiltered);
     let shopifyOnline = 0;
+    let shopifyOrders = 0;
+    // Orders per branch, the same counts the Summary page shows. product_sales
+    // has no invoice numbers, so orders can only come from here — which means
+    // they exist only for the whole channel, not for a room or a price band.
+    const branchOrders = new Map<string, number>();
     if (!categoryFiltered) {
-      let q = sb.from("daily_metrics").select("day,total_sales");
+      let q = sb.from("daily_metrics").select("day,total_sales,orders_count");
       if (from) q = q.gte("day", from);
       if (to) q = q.lte("day", to);
       const { data: dm } = await q;
-      shopifyOnline = ((dm ?? []) as { total_sales: number }[]).reduce(
-        (acc, r) => acc + Number(r.total_sales || 0),
-        0
-      );
+      for (const r of (dm ?? []) as { total_sales: number; orders_count: number }[]) {
+        shopifyOnline += Number(r.total_sales || 0);
+        shopifyOrders += Number(r.orders_count || 0);
+      }
+
+      let bq = sb.from("offline_branch_sales").select("day,branch,orders");
+      if (from) bq = bq.gte("day", from);
+      if (to) bq = bq.lte("day", to);
+      const { data: bo } = await bq;
+      for (const r of (bo ?? []) as { branch: string; orders: number }[]) {
+        const k = (r.branch ?? "").trim();
+        branchOrders.set(k, (branchOrders.get(k) ?? 0) + Number(r.orders || 0));
+      }
     }
     const onlineSource = categoryFiltered ? "odoo" : "shopify";
 
@@ -236,17 +264,17 @@ export async function GET(req: NextRequest) {
     const net = (v: number) => v * netFactor;
 
     const sum = <K extends string>(list: typeof inBand, key: (r: (typeof inBand)[number]) => K) => {
-      const m = new Map<K, { units: number; value: number; orders: number }>();
+      const m = new Map<K, { units: number; value: number; rows: typeof inBand }>();
       for (const r of list) {
         const k = key(r);
-        const e = m.get(k) ?? { units: 0, value: 0, orders: 0 };
+        const e = m.get(k) ?? { units: 0, value: 0, rows: [] };
         e.units += r.qty;
         e.value += r.value;
-        e.orders += 1;
+        e.rows.push(r);
         m.set(k, e);
       }
       return [...m.entries()]
-        .map(([label, v]) => ({ label, ...v, value: net(v.value) }))
+        .map(([label, v]) => ({ label, units: v.units, value: net(v.value), orders: countOrders(v.rows) }))
         .sort((a, b) => b.value - a.value);
     };
 
@@ -261,6 +289,7 @@ export async function GET(req: NextRequest) {
         lastSold: string;
         returnedUnits: number;
         returnedValue: number;
+        invoiceSet: Set<string>;
       }
     >();
     for (const r of inBand) {
@@ -272,7 +301,9 @@ export async function GET(req: NextRequest) {
         lastSold: r.day,
         returnedUnits: 0,
         returnedValue: 0,
+        invoiceSet: new Set<string>(),
       };
+      for (const i of r.invoices ?? []) e.invoiceSet.add(i);
       e.units += r.qty;
       e.value += r.value;
       e.returnedUnits += r.returnedQty;
@@ -280,10 +311,11 @@ export async function GET(req: NextRequest) {
       if (r.qty > 0 && r.day > e.lastSold) e.lastSold = r.day;
       byProduct.set(r.product_id, e);
     }
-    const products = [...byProduct.entries()].map(([product_id, v]) => ({
+    const products = [...byProduct.entries()].map(([product_id, { invoiceSet, ...v }]) => ({
       product_id,
       ...v,
       value: net(v.value),
+      orders: hasInvoices ? invoiceSet.size : null,
     }));
     const topProducts = [...products].sort((a, b) => b.value - a.value).slice(0, 10);
 
@@ -292,9 +324,14 @@ export async function GET(req: NextRequest) {
     // problem and would crowd out the genuinely slow ones. `lastSold` is the
     // column that makes the list actionable — a low count from last week is
     // not the same as a low count from March.
+    // Slowest = fewest orders once order numbers are stored, else fewest pieces.
     const slowProducts = products
       .filter((p) => p.units > 0)
-      .sort((a, b) => a.units - b.units || a.value - b.value)
+      .sort((a, b) =>
+        hasInvoices
+          ? (a.orders ?? 0) - (b.orders ?? 0) || a.value - b.value
+          : a.units - b.units || a.value - b.value
+      )
       .slice(0, 10);
 
     const bands = PRICE_BANDS.map((b) => {
@@ -305,13 +342,14 @@ export async function GET(req: NextRequest) {
         max: b.max,
         units: hit.reduce((s, r) => s + r.qty, 0),
         value: net(hit.reduce((s, r) => s + r.value, 0)),
+        orders: countOrders(hit),
       };
     });
 
     const tally = (list: typeof inBand) => ({
       units: list.reduce((acc, r) => acc + r.qty, 0),
       value: list.reduce((acc, r) => acc + r.value, 0),
-      orders: list.length,
+      orders: countOrders(list),
     });
 
     const days = rows.map((r) => r.day).sort();
@@ -327,9 +365,9 @@ export async function GET(req: NextRequest) {
       }
     }
     const seriesFor = (src: Row[], keyOf: (day: string) => string) => {
-      const m = new Map<string, { units: number; value: number }>();
+      const m = new Map<string, { units: number; value: number; inv: Set<string> }>();
       const touch = (k: string) => {
-        const e = m.get(k) ?? { units: 0, value: 0 };
+        const e = m.get(k) ?? { units: 0, value: 0, inv: new Set<string>() };
         m.set(k, e);
         return e;
       };
@@ -337,6 +375,7 @@ export async function GET(req: NextRequest) {
         const e = touch(keyOf(r.day));
         if ((r.kind ?? "product") === "product") {
           e.units += Number(r.qty || 0) - Number(r.returned_qty || 0);
+          for (const i of r.invoices ?? []) e.inv.add(i);
         }
         // Online value comes from Shopify below; Odoo's copy of it is skipped.
         if (onlineSource === "shopify" && includeOnline && isOnline(r.branch)) continue;
@@ -351,7 +390,12 @@ export async function GET(req: NextRequest) {
         }
       }
       return [...m.entries()]
-        .map(([label, v]) => ({ label, ...v }))
+        .map(([label, v]) => ({
+          label,
+          units: v.units,
+          value: v.value,
+          orders: hasInvoices ? v.inv.size : null,
+        }))
         .sort((a, b) => a.label.localeCompare(b.label));
     };
 
@@ -369,7 +413,11 @@ export async function GET(req: NextRequest) {
     // rest: the day chart answers "how is this month going", this one answers
     // "how do the months compare", and that second question is not about the
     // selected window. It needs its own read — the main one is date-bounded.
-    const allTimeRows = from || to ? await read(`${COLS},kind`, null, null) : allRows;
+    let allTimeRows = allRows;
+    if (from || to) {
+      allTimeRows = await read(`${COLS},kind,invoices`, null, null);
+      if (allTimeRows.length === 0) allTimeRows = await read(`${COLS},kind`, null, null);
+    }
     let allTimeScoped = channel
       ? allTimeRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
       : allTimeRows;
@@ -433,9 +481,12 @@ export async function GET(req: NextRequest) {
         ? monthRows.filter((r) => isOnline(r.branch)).reduce((acc, r) => acc + netOf(r), 0)
         : 0;
     }
-    const monthUnits = monthRows
-      .filter((r) => (r.kind ?? "product") === "product")
-      .reduce((acc, r) => acc + (Number(r.qty || 0) - Number(r.returned_qty || 0)), 0);
+    const monthProductRows = monthRows.filter((r) => (r.kind ?? "product") === "product");
+    const monthUnits = monthProductRows.reduce(
+      (acc, r) => acc + (Number(r.qty || 0) - Number(r.returned_qty || 0)),
+      0
+    );
+    const monthOrders = countOrders(monthProductRows);
 
     const monthDays = Math.max(1, daysBetween(monthFrom, monthTo));
     const windowFrom = from ?? days[0] ?? monthFrom;
@@ -444,6 +495,9 @@ export async function GET(req: NextRequest) {
 
     const currentValue = onlineSales + branchSales;
     const currentUnits = inBand.reduce((acc, r) => acc + r.qty, 0);
+    // Both sides of the orders trend count Odoo invoices, so they compare like
+    // for like (the headline online count is Shopify's, on its own clock).
+    const currentOrdersOdoo = countOrders(inBand);
     const trend = {
       // Per day, on both sides, so any window length compares like for like.
       current: {
@@ -452,6 +506,7 @@ export async function GET(req: NextRequest) {
         days: windowDays,
         value: currentValue / windowDays,
         units: currentUnits / windowDays,
+        orders: currentOrdersOdoo === null ? null : currentOrdersOdoo / windowDays,
       },
       baseline: {
         label: `daily average, ${baseMonth}`,
@@ -460,8 +515,17 @@ export async function GET(req: NextRequest) {
         days: monthDays,
         value: (monthBranchSales + monthOnlineSales) / monthDays,
         units: monthUnits / monthDays,
+        orders: monthOrders === null ? null : monthOrders / monthDays,
       },
     };
+
+    // Headline orders. For the whole channel: Shopify orders online plus each
+    // shop's invoice count — the Summary page's numbers. Drilled into a room,
+    // sub-category or price band: distinct invoices holding something in it.
+    const shopsInView = [...new Set(rows.filter((r) => !isOnline(r.branch)).map((r) => r.branch.trim()))];
+    const totalOrders = categoryFiltered
+      ? countOrders(inBand)
+      : (includeOnline ? shopifyOrders : 0) + shopsInView.reduce((a, b) => a + (branchOrders.get(b) ?? 0), 0);
 
     return NextResponse.json({
       ok: true,
@@ -477,6 +541,8 @@ export async function GET(req: NextRequest) {
       },
       totals: {
         units: inBand.reduce((acc, r) => acc + r.qty, 0),
+        orders: totalOrders,
+        hasInvoices,
         // gross = the product lines. discounts are negative. totalSales is what
         // was actually billed, and is the figure comparable with the rest of
         // the dashboard.
@@ -525,15 +591,39 @@ export async function GET(req: NextRequest) {
           })(),
         },
       ],
+      // `orders` is a real order count (Shopify orders online, Odoo invoices in
+      // the shops) when the view is the whole channel, and null once a room,
+      // sub-category or price band is picked — no order count exists there.
       channels: [
-        { label: "Online", ...tally(inBand.filter((r) => isOnline(r.branch))), value: onlineSales },
-        { label: "Branches", ...tally(inBand.filter((r) => !isOnline(r.branch))), value: branchSales },
+        {
+          label: "Online",
+          ...tally(inBand.filter((r) => isOnline(r.branch))),
+          value: onlineSales,
+          orders: categoryFiltered
+            ? countOrders(inBand.filter((r) => isOnline(r.branch)))
+            : includeOnline
+              ? shopifyOrders
+              : 0,
+        },
+        {
+          label: "Branches",
+          ...tally(inBand.filter((r) => !isOnline(r.branch))),
+          value: branchSales,
+          orders: categoryFiltered
+            ? countOrders(inBand.filter((r) => !isOnline(r.branch)))
+            : shopsInView.reduce((a, b) => a + (branchOrders.get(b) ?? 0), 0),
+        },
       ],
       branches: [...new Set(rows.map((r) => r.branch))]
         .map((b) => ({
           label: b,
           ...tally(inBand.filter((r) => r.branch === b)),
           value: isOnline(b) ? onlineSales : salesOf((r) => r.branch === b),
+          orders: categoryFiltered
+            ? countOrders(inBand.filter((r) => r.branch === b))
+            : isOnline(b)
+              ? shopifyOrders
+              : (branchOrders.get(b.trim()) ?? 0),
         }))
         .sort((a, b) => b.value - a.value),
       rooms: sum(inBand, (r) => (r.room ?? "Other") as string),

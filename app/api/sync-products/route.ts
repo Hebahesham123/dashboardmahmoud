@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
-import { fetchAnalyticsInvoices, aggregateProductSales } from "@/lib/odoo";
+import { fetchAnalyticsInvoices, aggregateProductSales, upsertProductSales } from "@/lib/odoo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -47,10 +47,7 @@ async function handle(req: NextRequest) {
     let upserted = 0;
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500).map((r) => ({ ...r, updated_at: now }));
-      const { error } = await sb
-        .from("product_sales")
-        .upsert(chunk, { onConflict: "day,branch,product_id" });
-      if (error) throw new Error(`product_sales upsert: ${error.message}`);
+      await upsertProductSales(sb, chunk);
       upserted += chunk.length;
     }
 

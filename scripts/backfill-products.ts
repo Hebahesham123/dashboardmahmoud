@@ -14,7 +14,7 @@
  */
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { fetchAnalyticsInvoices, aggregateProductSales } from "../lib/odoo";
+import { fetchAnalyticsInvoices, aggregateProductSales, upsertProductSales } from "../lib/odoo";
 
 config({ path: ".env.local" });
 
@@ -52,10 +52,9 @@ const addDays = (iso: string, n: number) => {
     if (delErr) throw new Error(`${start}: ${delErr.message}`);
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500).map((r) => ({ ...r, updated_at: now }));
-      const { error } = await sb
-        .from("product_sales")
-        .upsert(chunk, { onConflict: "day,branch,product_id" });
-      if (error) throw new Error(`${start}: ${error.message}`);
+      await upsertProductSales(sb, chunk).catch((e: Error) => {
+        throw new Error(`${start}: ${e.message}`);
+      });
     }
     totalRows += rows.length;
     totalValue += rows.reduce((s, r) => s + r.value, 0);

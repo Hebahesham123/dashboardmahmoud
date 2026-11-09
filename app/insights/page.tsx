@@ -8,18 +8,19 @@ interface Slice {
   label: string;
   units: number;
   value: number;
-  orders: number;
+  orders: number | null;
   room?: string;
 }
 interface Point {
   label: string;
   units: number;
   value: number;
+  orders?: number | null;
 }
 interface Trend {
   // Both sides are per day, so any window length compares like for like.
-  current: { from: string; to: string; days: number; units: number; value: number };
-  baseline: { label: string; from: string; to: string; days: number; units: number; value: number };
+  current: { from: string; to: string; days: number; units: number; value: number; orders?: number | null };
+  baseline: { label: string; from: string; to: string; days: number; units: number; value: number; orders?: number | null };
 }
 interface Band {
   label: string;
@@ -27,12 +28,14 @@ interface Band {
   max: number | null;
   units: number;
   value: number;
+  orders?: number | null;
 }
 interface Product {
   product_id: number;
   name: string;
   units: number;
   value: number;
+  orders?: number | null;
   subcategory: string;
   lastSold: string;
 }
@@ -48,11 +51,14 @@ interface Resp {
   };
   totals: {
     units: number;
+    orders?: number | null;
+    hasInvoices?: boolean;
     gross: number;
     discounts: number;
     shipping: number;
     totalSales: number;
     products: number;
+    onlineSource?: "shopify" | "odoo";
   };
   channels: Slice[];
   branches: Slice[];
@@ -201,6 +207,12 @@ export default function InsightsPage() {
   // Days while the window is short enough to read; months beyond that.
   const byDay = !allTime && (data?.daily.length ?? 0) > 0 && (data?.daily.length ?? 0) <= 62;
   const prevLabel = data ? `vs ${data.trend.baseline.label}` : undefined;
+  // Where the online money comes from, for the info popovers. Shopify has no
+  // product categories, so once a room/sub-category/price is picked it is Odoo.
+  const onlineFrom =
+    data?.totals.onlineSource === "odoo"
+      ? "Odoo invoices for the website (Shopify has no product categories, so Odoo is used while a room, sub-category or price filter is on)"
+      : "Shopify, the same figure as the Summary page";
 
   // A handful of plain-language reads of the same numbers. They earn their
   // place by saying the thing a glance at the charts would take a minute to
@@ -225,8 +237,8 @@ export default function InsightsPage() {
         tone: d >= 0 ? "up" : "down",
       });
     }
-    const bandTop = [...data.bands].sort((a, b) => b.units - a.units)[0];
-    if (bandTop && bandTop.units > 0) out.push({ text: `Most pieces sell at ${bandTop.label}`, tone: "flat" });
+    const bandTop = [...data.bands].sort((a, b) => (b.orders ?? 0) - (a.orders ?? 0))[0];
+    if (bandTop && (bandTop.orders ?? 0) > 0) out.push({ text: `Most orders are at ${bandTop.label}`, tone: "flat" });
     return out;
   }, [data]);
 
@@ -392,15 +404,46 @@ export default function InsightsPage() {
               delta={delta(data.trend.current.value, data.trend.baseline.value)}
               deltaHint={prevLabel}
               strong
+              info={
+                <>
+                  <p>All NS Home sales in the dates you picked: after discounts, with shipping, minus returns.</p>
+                  <p>
+                    <b>Online</b> comes from {onlineFrom}. <b>Branches</b> come from Odoo sales invoices.
+                  </p>
+                  <p>The arrow compares a day in this period with an average day of the month.</p>
+                </>
+              }
             />
             <Stat
-              label="Units sold"
-              value={fmtNum(Math.round(data.totals.units))}
-              hint="pieces"
-              delta={delta(data.trend.current.units, data.trend.baseline.units)}
+              label="Orders"
+              value={data.totals.orders == null ? "—" : fmtNum(data.totals.orders)}
+              hint="orders"
+              delta={
+                data.trend.current.orders != null && data.trend.baseline.orders != null
+                  ? delta(data.trend.current.orders, data.trend.baseline.orders)
+                  : null
+              }
               deltaHint={prevLabel}
+              info={
+                <>
+                  <p>Number of orders in the dates you picked. Returns are not counted as orders.</p>
+                  <p>
+                    With no room, sub-category or price filter: online is the Shopify order count and each branch is its
+                    number of Odoo sales invoices, the same as the Summary page.
+                  </p>
+                  <p>
+                    With one of those filters on: the number of Odoo sales invoices that contain at least one product
+                    in your selection. An order with two towels counts once.
+                  </p>
+                </>
+              }
             />
-            <Stat label="Products" value={fmtNum(data.totals.products)} hint="distinct items sold" />
+            <Stat
+              label="Products"
+              value={fmtNum(data.totals.products)}
+              hint="distinct items sold"
+              info={<p>How many different products sold at least once in the dates you picked. From Odoo invoice lines.</p>}
+            />
           </div>
 
           {highlights.length > 0 && (
@@ -412,11 +455,32 @@ export default function InsightsPage() {
           )}
 
           <div className="grid gap-4 lg:grid-cols-3">
-            <Panel title="Share by room" subtitle="part of the whole">
+            <Panel
+              title="Share by room"
+              subtitle="part of the whole"
+              info={
+                <>
+                  <p>Each room&apos;s share of total sales.</p>
+                  <p>A product&apos;s room comes from its Odoo category, e.g. &quot;NS Home / Bed Linen&quot; → Bedroom.</p>
+                  <p>Discounts and shipping belong to no product, so they are shared across rooms by value.</p>
+                </>
+              }
+            >
               <Donut rows={data.rooms} currency={currency} />
             </Panel>
             <div className="lg:col-span-2">
-              <Panel title={byDay ? "Sales by day" : "Sales by month"} subtitle="EGP">
+              <Panel
+                title={byDay ? "Sales by day" : "Sales by month"}
+                subtitle="EGP"
+                info={
+                  <>
+                    <p>Total sales for each {byDay ? "day" : "month"} in the dates you picked, after discounts and returns.</p>
+                    <p>
+                      Online from {onlineFrom}; branches from Odoo sales invoices, by invoice date.
+                    </p>
+                  </>
+                }
+              >
                 <Columns
                   points={byDay ? data.daily : data.timeseries}
                   currency={currency}
@@ -427,13 +491,40 @@ export default function InsightsPage() {
           </div>
 
           {data.monthly.length > 1 && (
-            <Panel title="Sales by month" subtitle="every month on record — the date filter above does not apply here">
+            <Panel
+              title="Sales by month"
+              subtitle="every month on record — the date filter above does not apply here"
+              info={
+                <>
+                  <p>Total sales for every month on record. The other filters apply, but not the dates.</p>
+                  <p>Online from {onlineFrom}; branches from Odoo sales invoices.</p>
+                </>
+              }
+            >
               <Columns points={data.monthly} currency={currency} unit="month" />
             </Panel>
           )}
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Where it sells" subtitle="online against the shops, then branch by branch">
+            <Panel
+              title="Where it sells"
+              subtitle="online against the shops, then branch by branch"
+              info={
+                <>
+                  <p>
+                    <b>EGP</b> is total sales: online from {onlineFrom}; each branch from its Odoo sales invoices.
+                  </p>
+                  <p>
+                    <b>Orders</b> (grey): online is the Shopify order count; a branch is its number of Odoo sales
+                    invoices. Returns are not counted as orders.
+                  </p>
+                  <p>
+                    With a room, sub-category or price filter on, it is the number of Odoo sales invoices (online ones
+                    included) holding at least one product in your selection.
+                  </p>
+                </>
+              }
+            >
               <Bars
                 rows={data.channels}
                 currency={currency}
@@ -450,7 +541,20 @@ export default function InsightsPage() {
               )}
             </Panel>
 
-            <Panel title="Price bands" subtitle="by unit price — darker is dearer">
+            <Panel
+              title="Price bands"
+              subtitle="by unit price — darker is dearer"
+              info={
+                <>
+                  <p>Sales grouped by the price of one piece (line value ÷ pieces), from Odoo invoice lines.</p>
+                  <p>
+                    <b>EGP</b> is the sales in that band. <b>Orders</b> (grey) is the number of Odoo sales invoices
+                    with a product in that band, and sets the bar length. One order with a cheap and a dear item counts
+                    in both bands.
+                  </p>
+                </>
+              }
+            >
               <BandBars bands={data.bands} currency={currency} />
             </Panel>
           </div>
@@ -462,6 +566,19 @@ export default function InsightsPage() {
                 data.rooms.reduce((a, r) => a + r.value, 0),
                 currency
               )} — total sales`}
+              info={
+                <>
+                  <p>
+                    <b>EGP</b> is each room&apos;s sales. Discounts and shipping belong to no product, so they are shared
+                    across rooms by value. That way the rooms add up to total sales.
+                  </p>
+                  <p>
+                    <b>Orders</b> (grey) is the number of Odoo sales invoices with at least one product from that room.
+                    An order with a towel and a cushion counts in both rooms, so rooms can add up to more than the
+                    total. The room comes from the product&apos;s Odoo category.
+                  </p>
+                </>
+              }
             >
               <Bars
                 rows={data.rooms}
@@ -471,7 +588,23 @@ export default function InsightsPage() {
                 colorByRoom
               />
             </Panel>
-            <Panel title="By sub-category" subtitle="towels, fitted sheets, cushions …">
+            <Panel
+              title="By sub-category"
+              subtitle="towels, fitted sheets, cushions …"
+              info={
+                <>
+                  <p>
+                    <b>EGP</b> is each sub-category&apos;s sales, with discounts and shipping shared by value, like the
+                    rooms.
+                  </p>
+                  <p>
+                    <b>Orders</b> (grey) is the number of Odoo sales invoices with at least one product from that
+                    sub-category. The sub-category is the last part of the product&apos;s Odoo category, e.g.
+                    &quot;Bathroom Textile/Towels&quot; → Towels.
+                  </p>
+                </>
+              }
+            >
               <Bars
                 rows={data.subcategories}
                 currency={currency}
@@ -484,10 +617,34 @@ export default function InsightsPage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Top 10 products" subtitle="by revenue">
+            <Panel
+              title="Top 10 products"
+              subtitle="by revenue"
+              info={
+                <>
+                  <p>The 10 products with the most sales in the dates you picked, from Odoo invoice lines.</p>
+                  <p>
+                    <b>Orders</b> is how many Odoo sales invoices included the product. <b>Revenue</b> is the
+                    product&apos;s sales with its share of discounts and shipping.
+                  </p>
+                </>
+              }
+            >
               <ProductTable rows={data.topProducts} currency={currency} />
             </Panel>
-            <Panel title="10 slowest movers" subtitle="fewest pieces sold, and when they last moved">
+            <Panel
+              title="10 slowest movers"
+              subtitle="fewest orders, and when they last moved"
+              info={
+                <>
+                  <p>Products that sold, but in the fewest orders in the dates you picked. From Odoo invoice lines.</p>
+                  <p>
+                    <b>Orders</b> is how many Odoo sales invoices included the product. <b>Revenue</b> is as in Top
+                    10. <b>Last</b> is the last day the product sold (month-day).
+                  </p>
+                </>
+              }
+            >
               <ProductTable rows={data.slowProducts} currency={currency} trailing="last" />
             </Panel>
           </div>
@@ -498,8 +655,14 @@ export default function InsightsPage() {
             per-room, per-category and per-product figure is scaled so the parts add up to that total: Odoo books a
             discount against no category, shipping belongs to none, and Odoo's copy of the website differs from
             Shopify's, so those ride along in proportion to value rather than being dropped. That makes a single
-            category figure an apportionment, not the exact value of one sale. Units and revenue are net of anything returned.
-            Price bands use the unit price (value ÷ units).
+            category figure an apportionment, not the exact value of one sale. Revenue is net of anything returned;
+            orders count sales invoices only, never returns. Price bands use the unit price (value ÷ pieces).
+            {data.totals.hasInvoices === false && (
+              <b className="ml-1 font-semibold text-amber-700">
+                Order counts per room, product and band need migration_v19.sql and a re-run of
+                scripts/backfill-products.ts — until then they show —.
+              </b>
+            )}
             {loading && <span className="ml-1">· Refreshing…</span>}
           </p>
         </div>
@@ -541,6 +704,7 @@ function Stat({
   strong,
   delta: d,
   deltaHint,
+  info,
 }: {
   label: string;
   value: string;
@@ -548,6 +712,7 @@ function Stat({
   strong?: boolean;
   delta?: number | null;
   deltaHint?: string;
+  info?: React.ReactNode;
 }) {
   return (
     <div
@@ -555,7 +720,10 @@ function Stat({
         strong ? "border-[#d8c3aa] bg-gradient-to-b from-[#fdfaf6] to-white" : "border-[#e7e2dc] bg-white"
       }`}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+        {label}
+        {info && <Info>{info}</Info>}
+      </div>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="text-xl font-bold tabular-nums text-gray-900 sm:text-2xl">{value}</span>
         {d !== null && d !== undefined && <Arrow value={d} />}
@@ -777,7 +945,7 @@ function Columns({
                 backgroundColor: INK,
                 opacity: p.label === peak.label ? 1 : 0.75,
               }}
-              title={`${p.label} — ${fmtMoney(p.value, currency)} from ${fmtNum(Math.round(p.units))} pieces`}
+              title={`${p.label} — ${fmtMoney(p.value, currency)}${p.orders != null ? ` from ${fmtNum(p.orders)} orders` : ""}`}
             >
               {/* Only when the column is tall enough to hold it without
                   clipping; the tooltip carries it otherwise. */}
@@ -801,16 +969,59 @@ function Columns({
   );
 }
 
-function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+/**
+ * A small "i" beside a number that says what the number is and where it comes
+ * from. Opens on hover, and on tap (focus) so it works on a phone too.
+ */
+function Info({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="group relative ml-1 inline-flex align-middle">
+      <button
+        type="button"
+        aria-label="What is this number?"
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[9px] font-bold normal-case text-gray-400 hover:border-[#6f4423] hover:text-[#6f4423] focus:border-[#6f4423] focus:text-[#6f4423] focus:outline-none"
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className="invisible absolute left-0 top-6 z-30 w-72 max-w-[80vw] space-y-1.5 rounded-lg border border-[#e7e2dc] bg-white p-3 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-gray-600 opacity-0 shadow-lg transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
+function Panel({
+  title,
+  subtitle,
+  info,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  info?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="rounded-xl border border-[#e7e2dc] bg-white p-4 shadow-[0_1px_2px_rgba(16,12,8,0.04)]">
       <header className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[13px] font-bold tracking-tight text-gray-900">{title}</h2>
+        <h2 className="text-[13px] font-bold tracking-tight text-gray-900">
+          {title}
+          {info && <Info>{info}</Info>}
+        </h2>
         {subtitle && <p className="shrink-0 truncate text-[11px] text-gray-400">{subtitle}</p>}
       </header>
       {children}
     </section>
   );
+}
+
+/** "73 orders", or a dash while order numbers are not stored yet. */
+function ordersLabel(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `${fmtNum(n)} ${n === 1 ? "order" : "orders"}`;
 }
 
 /**
@@ -833,6 +1044,7 @@ function Bars({
   scroll?: boolean;
   colorByRoom?: boolean;
 }) {
+  const countOf = (r: Slice) => ordersLabel(r.orders);
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)));
   if (!rows.length) return <p className="py-6 text-center text-xs text-gray-400">Nothing in this selection.</p>;
   return (
@@ -843,7 +1055,7 @@ function Bars({
           <button
             key={r.label}
             onClick={() => onPick?.(r.label)}
-            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${fmtNum(Math.round(r.units))} pieces`}
+            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${countOf(r)}`}
             className={`block w-full rounded-lg px-2 py-1.5 text-left transition-colors ${
               onPick ? "hover:bg-[#faf7f3]" : "cursor-default"
             } ${isActive ? "bg-[#f6efe7]" : ""}`}
@@ -863,8 +1075,8 @@ function Bars({
                   }}
                 />
               </div>
-              <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
-                {fmtNum(Math.round(r.units))}
+              <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
+                {countOf(r)}
               </span>
             </div>
           </button>
@@ -876,13 +1088,16 @@ function Bars({
 
 /** Price bands are ordered, so here the ordinal ramp is the right encoding. */
 function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
-  const max = Math.max(1, ...bands.map((b) => Math.abs(b.units)));
+  // Bar length follows orders; before order numbers are stored, sales value.
+  const hasOrders = bands.some((b) => b.orders != null);
+  const size = (b: Band) => Math.abs(hasOrders ? (b.orders ?? 0) : b.value);
+  const max = Math.max(1, ...bands.map(size));
   return (
     <div className="space-y-0.5">
       {bands.map((b, i) => (
         <div
           key={b.label}
-          title={`${b.label} — ${fmtNum(Math.round(b.units))} pieces, ${fmtMoney(b.value, currency)}`}
+          title={`${b.label} — ${ordersLabel(b.orders)}, ${fmtMoney(b.value, currency)}`}
           className="rounded-lg px-2 py-1.5"
         >
           <div className="flex items-baseline justify-between gap-3">
@@ -894,13 +1109,13 @@ function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
               <div
                 className="h-full rounded-r-[4px]"
                 style={{
-                  width: `${Math.max(1.5, (Math.abs(b.units) / max) * 100)}%`,
+                  width: `${Math.max(1.5, (size(b) / max) * 100)}%`,
                   backgroundColor: BAND_RAMP[Math.min(i, BAND_RAMP.length - 1)],
                 }}
               />
             </div>
-            <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
-              {fmtNum(Math.round(b.units))}
+            <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
+              {ordersLabel(b.orders)}
             </span>
           </div>
         </div>
@@ -932,7 +1147,7 @@ function ProductTable({
         <tr className="text-[10px] uppercase tracking-wider text-gray-400">
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 font-semibold">#</th>
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 font-semibold">Product</th>
-          <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Units</th>
+          <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Orders</th>
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Revenue</th>
           {trailing === "last" && (
             <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Last</th>
@@ -949,7 +1164,9 @@ function ProductTable({
               </div>
               <div className="truncate text-[10px] text-gray-400">{p.subcategory}</div>
             </td>
-            <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-700">{fmtNum(Math.round(p.units))}</td>
+            <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-700">
+              {p.orders == null ? "—" : fmtNum(p.orders)}
+            </td>
             <td className="truncate px-1.5 py-1.5 text-right tabular-nums font-semibold text-gray-900">
               {fmtMoney(p.value, currency)}
             </td>
