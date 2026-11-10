@@ -115,6 +115,90 @@ export async function GET(req: NextRequest) {
     if (allRows.length === 0)
       allRows = await read("day,branch,product_id,product_name,room,category,subcategory,qty,value");
 
+    /**
+     * The website from Shopify's own order lines, not Odoo's copy of them.
+     * Odoo invoices website orders in batches, so its shopify branch on one
+     * day held pieces from many older orders: 9 Nov read 12 orders beside 441
+     * pieces, and 31 orders in a single price band. A Shopify line sits on the
+     * day its order was placed (the day the order count uses), so every panel
+     * describes the same orders. Cancelled orders sold nothing and are left
+     * out, as on the Summary page. Room and sub-category come from the Shopify
+     * product type (stock_levels), else from the Odoo product of the same name.
+     */
+    const wantOnline = channel !== "offline" && (!branch || isOnline(branch));
+    const onlineBranch = allRows.find((r) => isOnline(r.branch))?.branch ?? "shopify";
+    const norm = (n: string | null | undefined) => (n ?? "").trim().toLowerCase();
+    let shopRows: Row[] = [];
+    if (wantOnline) {
+      type Cat = { room: string | null; category: string | null; subcategory: string | null };
+      type Item = {
+        order_id: number;
+        product_id: number | null;
+        title: string | null;
+        quantity: number;
+        price: number;
+        order_date: string | null;
+      };
+      const [cancelledRows, items, types] = await Promise.all([
+        pageAll<{ id: number }>(() => sb.from("orders").select("id").not("cancelled_at", "is", null) as never),
+        pageAll<Item>(() => sb.from("order_items").select("order_id,product_id,title,quantity,price,order_date") as never),
+        pageAll<Cat & { product_id: number }>(
+          () => sb.from("stock_levels").select("product_id,room,category,subcategory") as never
+        ),
+      ]);
+      const cancelled = new Set(cancelledRows.map((o) => o.id));
+      const live = items.filter((it) => !cancelled.has(it.order_id) && it.order_date);
+      const byType = new Map(types.map((t) => [Number(t.product_id), t]));
+      // Products no longer on the website: look the name up in Odoo.
+      const missing = [
+        ...new Set(live.filter((it) => !byType.has(Number(it.product_id))).map((it) => (it.title ?? "").trim())),
+      ].filter(Boolean);
+      const byName = new Map<string, Cat>();
+      for (let i = 0; i < missing.length; i += 100) {
+        const { data } = await sb
+          .from("product_sales")
+          .select("product_name,room,category,subcategory")
+          .in("product_name", missing.slice(i, i + 100))
+          .limit(1000);
+        for (const r of (data ?? []) as (Cat & { product_name: string })[]) byName.set(norm(r.product_name), r);
+      }
+      shopRows = live.map((it) => {
+        const c = byType.get(Number(it.product_id)) ?? byName.get(norm(it.title));
+        const qty = Number(it.quantity || 0);
+        return {
+          day: (it.order_date ?? "").slice(0, 10),
+          branch: onlineBranch,
+          product_id: -Number(it.product_id || 0),
+          product_name: it.title,
+          room: c?.room ?? null,
+          category: c?.category ?? null,
+          subcategory: c?.subcategory ?? null,
+          qty,
+          value: qty * Number(it.price || 0),
+          returned_qty: 0,
+          returned_value: 0,
+          kind: "product",
+          invoices: [`shopify#${it.order_id}`],
+        };
+      });
+    }
+    /** Odoo's online lines out; Shopify's for [lo, hi] and the filters in. */
+    const swapOnline = (list: Row[], lo: string | null, hi: string | null) =>
+      !wantOnline
+        ? list
+        : [
+            ...list.filter((r) => !isOnline(r.branch)),
+            ...shopRows.filter(
+              (r) =>
+                (!lo || r.day >= lo) &&
+                (!hi || r.day <= hi) &&
+                (!room || r.room === room) &&
+                (!category || r.category === category) &&
+                (!subcategory || r.subcategory === subcategory)
+            ),
+          ];
+    allRows = swapOnline(allRows, from, to);
+
     // Channel is filtered here rather than in the query: room and category are
     // exact matches the database can do, but branch is a pattern.
     let rows = channel
@@ -240,45 +324,13 @@ export async function GET(req: NextRequest) {
      * to be the shop's.
      */
     const includeOnline = channel !== "offline" && (!branch || isOnline(branch));
-    /**
-     * Pieces the way the Summary page counts them. Shops: pieces sold on Odoo
-     * invoices, returns not taken off (Summary lists them apart). Online: the
-     * Shopify order lines, cancelled orders left out. Odoo invoices website
-     * orders in batches, so its shopify branch on one day can hold the pieces
-     * of many older orders — which read "12 orders · 441 pcs" beside Shopify's
-     * order count. Shopify knows no rooms, so a room, sub-category or price
-     * filter falls back to Odoo's online lines.
-     */
-    const shopifyPieces = onlineSource === "shopify" && includeOnline;
-    const onlinePiecesByDay = new Map<string, number>();
-    if (shopifyPieces) {
-      const [cancelledRows, items] = await Promise.all([
-        pageAll<{ id: number }>(() => sb.from("orders").select("id").not("cancelled_at", "is", null) as never),
-        pageAll<{ order_id: number; quantity: number; order_date: string }>(
-          () => sb.from("order_items").select("order_id,quantity,order_date") as never
-        ),
-      ]);
-      const cancelled = new Set(cancelledRows.map((o) => o.id));
-      for (const it of items) {
-        if (cancelled.has(it.order_id)) continue;
-        const d = (it.order_date ?? "").slice(0, 10);
-        if (!d) continue;
-        onlinePiecesByDay.set(d, (onlinePiecesByDay.get(d) ?? 0) + Number(it.quantity || 0));
-      }
-    }
-    const onlinePiecesIn = (lo: string | null, hi: string | null) => {
-      let n = 0;
-      for (const [d, q] of onlinePiecesByDay) if ((!lo || d >= lo) && (!hi || d <= hi)) n += q;
-      return n;
-    };
+    // Pieces as the Summary page counts them: pieces sold, returns not taken
+    // off. Online lines are Shopify's (see above), so this is Summary's figure.
     const soldOf = (list: { soldQty: number }[]) => list.reduce((a, r) => a + r.soldQty, 0);
-    /** Pieces for a set of product lines over [lo, hi]. */
-    const piecesOf = (list: typeof inBand, lo: string | null, hi: string | null) =>
-      soldOf(list.filter((r) => !isOnline(r.branch))) +
-      (shopifyPieces ? onlinePiecesIn(lo, hi) : soldOf(list.filter((r) => isOnline(r.branch))));
-    const onlinePieces = shopifyPieces
-      ? onlinePiecesIn(from, to)
-      : soldOf(inBand.filter((r) => isOnline(r.branch)));
+    // Items: different products, however many pieces of each.
+    const itemsOf = (list: { product_name: string | null; product_id: number }[]) =>
+      new Set(list.map((r) => norm(r.product_name) || String(r.product_id))).size;
+    const onlinePieces = soldOf(inBand.filter((r) => isOnline(r.branch)));
 
     const netOf = (r: { value: number; returned_value: number }) =>
       Number(r.value || 0) - Number(r.returned_value || 0);
@@ -308,20 +360,27 @@ export async function GET(req: NextRequest) {
       for (const r of list) {
         const k = key(r);
         const e = m.get(k) ?? { units: 0, value: 0, rows: [] };
-        e.units += r.qty;
+        e.units += r.soldQty;
         e.value += r.value;
         e.rows.push(r);
         m.set(k, e);
       }
       return [...m.entries()]
-        .map(([label, v]) => ({ label, units: v.units, value: net(v.value), orders: countOrders(v.rows) }))
+        .map(([label, v]) => ({
+          label,
+          units: v.units,
+          items: itemsOf(v.rows),
+          value: net(v.value),
+          orders: countOrders(v.rows),
+        }))
         .sort((a, b) => b.value - a.value);
     };
 
     // One product is one product, however many days and branches it sold across.
     const byProduct = new Map<
-      number,
+      string,
       {
+        product_id: number;
         name: string;
         units: number;
         value: number;
@@ -333,7 +392,9 @@ export async function GET(req: NextRequest) {
       }
     >();
     for (const r of inBand) {
-      const e = byProduct.get(r.product_id) ?? {
+      const key = norm(r.product_name) || String(r.product_id);
+      const e = byProduct.get(key) ?? {
+        product_id: r.product_id,
         name: r.product_name ?? String(r.product_id),
         units: 0,
         value: 0,
@@ -344,15 +405,14 @@ export async function GET(req: NextRequest) {
         invoiceSet: new Set<string>(),
       };
       for (const i of r.invoices ?? []) e.invoiceSet.add(i);
-      e.units += r.qty;
+      e.units += r.soldQty;
       e.value += r.value;
       e.returnedUnits += r.returnedQty;
       e.returnedValue += r.returnedValue;
       if (r.qty > 0 && r.day > e.lastSold) e.lastSold = r.day;
-      byProduct.set(r.product_id, e);
+      byProduct.set(key, e);
     }
-    const products = [...byProduct.entries()].map(([product_id, { invoiceSet, ...v }]) => ({
-      product_id,
+    const products = [...byProduct.values()].map(({ invoiceSet, ...v }) => ({
       ...v,
       value: net(v.value),
       orders: hasInvoices ? invoiceSet.size : null,
@@ -380,14 +440,16 @@ export async function GET(req: NextRequest) {
         label: b.label,
         min: b.min,
         max: b.max,
-        units: hit.reduce((s, r) => s + r.qty, 0),
+        units: soldOf(hit),
+        items: itemsOf(hit),
         value: net(hit.reduce((s, r) => s + r.value, 0)),
         orders: countOrders(hit),
       };
     });
 
     const tally = (list: typeof inBand) => ({
-      units: list.reduce((acc, r) => acc + r.qty, 0),
+      units: soldOf(list),
+      items: itemsOf(list),
       value: list.reduce((acc, r) => acc + r.value, 0),
       orders: countOrders(list),
     });
@@ -414,8 +476,7 @@ export async function GET(req: NextRequest) {
       for (const r of src) {
         const e = touch(keyOf(r.day));
         if ((r.kind ?? "product") === "product") {
-          // Pieces as Summary counts them; Shopify's online pieces are added below.
-          if (!(shopifyPieces && isOnline(r.branch))) e.units += Number(r.qty || 0);
+          e.units += Number(r.qty || 0); // pieces sold, as on Summary
           for (const i of r.invoices ?? []) e.inv.add(i);
         }
         // Online value comes from Shopify below; Odoo's copy of it is skipped.
@@ -428,14 +489,6 @@ export async function GET(req: NextRequest) {
         for (const [day, v] of onlineByDay) {
           if (lo && hi && (day < lo || day > hi)) continue;
           touch(keyOf(day)).value += v;
-        }
-      }
-      if (shopifyPieces) {
-        const lo = src.length ? src.reduce((a, r) => (r.day < a ? r.day : a), src[0].day) : null;
-        const hi = src.length ? src.reduce((a, r) => (r.day > a ? r.day : a), src[0].day) : null;
-        for (const [day, q] of onlinePiecesByDay) {
-          if (lo && hi && (day < lo || day > hi)) continue;
-          touch(keyOf(day)).units += q;
         }
       }
       return [...m.entries()]
@@ -466,6 +519,7 @@ export async function GET(req: NextRequest) {
     if (from || to) {
       allTimeRows = await read(`${COLS},kind,invoices`, null, null);
       if (allTimeRows.length === 0) allTimeRows = await read(`${COLS},kind`, null, null);
+      allTimeRows = swapOnline(allTimeRows, null, null);
     }
     let allTimeScoped = channel
       ? allTimeRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
@@ -531,10 +585,7 @@ export async function GET(req: NextRequest) {
         : 0;
     }
     const monthProductRows = monthRows.filter((r) => (r.kind ?? "product") === "product");
-    const monthUnits =
-      monthProductRows
-        .filter((r) => !(shopifyPieces && isOnline(r.branch)))
-        .reduce((acc, r) => acc + Number(r.qty || 0), 0) + (shopifyPieces ? onlinePiecesIn(monthFrom, monthTo) : 0);
+    const monthUnits = monthProductRows.reduce((acc, r) => acc + Number(r.qty || 0), 0);
     const monthOrders = countOrders(monthProductRows);
 
     const monthDays = Math.max(1, daysBetween(monthFrom, monthTo));
@@ -543,7 +594,7 @@ export async function GET(req: NextRequest) {
     const windowDays = Math.max(1, daysBetween(windowFrom, windowTo));
 
     const currentValue = onlineSales + branchSales;
-    const currentUnits = piecesOf(inBand, from, to);
+    const currentUnits = soldOf(inBand);
     // Both sides of the orders trend count Odoo invoices, so they compare like
     // for like (the headline online count is Shopify's, on its own clock).
     const currentOrdersOdoo = countOrders(inBand);
@@ -590,6 +641,7 @@ export async function GET(req: NextRequest) {
       },
       totals: {
         units: currentUnits,
+        items: byProduct.size,
         orders: totalOrders,
         hasInvoices,
         // gross = the product lines. discounts are negative. totalSales is what
@@ -609,8 +661,8 @@ export async function GET(req: NextRequest) {
         soldUnits: inBand.reduce((acc, r) => acc + r.soldQty, 0),
       },
       // Most-returned first — the list worth acting on.
-      returnedProducts: [...byProduct.entries()]
-        .map(([product_id, v]) => ({ product_id, ...v }))
+      returnedProducts: [...byProduct.values()]
+        .map(({ invoiceSet: _inv, ...v }) => v)
         .filter((p) => p.returnedUnits > 0)
         .sort((a, b) => b.returnedValue - a.returnedValue)
         .slice(0, 10),

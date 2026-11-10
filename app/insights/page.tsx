@@ -7,6 +7,7 @@ import { fmtNum, fmtMoney } from "@/lib/format";
 interface Slice {
   label: string;
   units: number;
+  items?: number;
   value: number;
   orders: number | null;
   room?: string;
@@ -27,6 +28,7 @@ interface Band {
   min: number;
   max: number | null;
   units: number;
+  items?: number;
   value: number;
   orders?: number | null;
 }
@@ -51,6 +53,7 @@ interface Resp {
   };
   totals: {
     units: number;
+    items?: number;
     orders?: number | null;
     hasInvoices?: boolean;
     gross: number;
@@ -207,11 +210,10 @@ export default function InsightsPage() {
   // Days while the window is short enough to read; months beyond that.
   const byDay = !allTime && (data?.daily.length ?? 0) > 0 && (data?.daily.length ?? 0) <= 62;
   const prevLabel = data ? `vs ${data.trend.baseline.label}` : undefined;
-  // Where the online money comes from, for the info popovers. Shopify has no
-  // product categories, so once a room/sub-category/price is picked it is Odoo.
+  // Where the online money comes from, for the info popovers.
   const onlineFrom =
     data?.totals.onlineSource === "odoo"
-      ? "Odoo invoices for the website (Shopify has no product categories, so Odoo is used while a room, sub-category or price filter is on)"
+      ? "the Shopify order lines in your selection, at their line prices (order discounts and shipping belong to no product)"
       : "Shopify, the same figure as the Summary page";
 
   // A handful of plain-language reads of the same numbers. They earn their
@@ -451,12 +453,16 @@ export default function InsightsPage() {
                     Shops: pieces on Odoo sales invoices. Online: pieces on Shopify orders, cancelled orders left out.
                     Returns are not taken off. An order with two towels counts as two pieces.
                   </p>
+                  <p>
+                    Every panel on this page uses the same orders, so the dates you pick apply everywhere: online
+                    figures come from the Shopify orders placed on those days.
+                  </p>
                 </>
               }
             />
             <Stat
               label="Products"
-              value={fmtNum(data.totals.products)}
+              value={fmtNum(data.totals.items ?? data.totals.products)}
               hint="distinct items sold"
               info={<p>How many different products sold at least once in the dates you picked. From Odoo invoice lines.</p>}
             />
@@ -536,11 +542,12 @@ export default function InsightsPage() {
                   </p>
                   <p>
                     <b>pcs</b> is pieces sold, also as on the Summary page: online from Shopify orders (cancelled ones
-                    left out), branches from Odoo invoices.
+                    left out), branches from Odoo invoices. <b>items</b> is how many different products those pieces
+                    were.
                   </p>
                   <p>
-                    With a room, sub-category or price filter on, both come from Odoo sales invoices (online ones
-                    included) holding at least one product in your selection.
+                    With a room, sub-category or price filter on, orders are the Shopify orders and Odoo invoices
+                    holding at least one product in your selection.
                   </p>
                 </>
               }
@@ -1039,10 +1046,16 @@ function Panel({
   );
 }
 
-/** "120 pcs" — net pieces sold. */
+/** "120 pcs" — pieces sold. */
 function piecesLabel(n: number | null | undefined): string {
   if (n == null) return "—";
   return `${fmtNum(n)} pcs`;
+}
+
+/** "40 items" — different products. */
+function itemsLabel(n: number | null | undefined): string {
+  if (n == null) return "";
+  return ` · ${fmtNum(n)} ${n === 1 ? "item" : "items"}`;
 }
 
 /** "73 orders", or a dash while order numbers are not stored yet. */
@@ -1082,7 +1095,7 @@ function Bars({
           <button
             key={r.label}
             onClick={() => onPick?.(r.label)}
-            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${countOf(r)}, ${piecesLabel(r.units)}`}
+            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${countOf(r)}, ${piecesLabel(r.units)}${itemsLabel(r.items)}`}
             className={`block w-full rounded-lg px-2 py-1.5 text-left transition-colors ${
               onPick ? "hover:bg-[#faf7f3]" : "cursor-default"
             } ${isActive ? "bg-[#f6efe7]" : ""}`}
@@ -1104,6 +1117,7 @@ function Bars({
               </div>
               <span className="shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-gray-400">
                 {countOf(r)} · {piecesLabel(r.units)}
+                {itemsLabel(r.items)}
               </span>
             </div>
           </button>
@@ -1143,6 +1157,7 @@ function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
             </div>
             <span className="shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-gray-400">
               {ordersLabel(b.orders)} · {piecesLabel(b.units)}
+              {itemsLabel(b.items)}
             </span>
           </div>
         </div>
@@ -1185,7 +1200,7 @@ function ProductTable({
       </thead>
       <tbody>
         {rows.map((p, i) => (
-          <tr key={p.product_id} className="border-b border-[#f7f5f2] last:border-0 hover:bg-[#faf7f3]">
+          <tr key={p.name} className="border-b border-[#f7f5f2] last:border-0 hover:bg-[#faf7f3]">
             <td className="px-1.5 py-1.5 tabular-nums text-gray-300">{i + 1}</td>
             <td className="px-1.5 py-1.5">
               <div className="truncate text-gray-800" title={p.name}>
