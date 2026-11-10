@@ -396,7 +396,7 @@ export default function InsightsPage() {
         />
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat
               label="Total sales"
               value={fmtMoney(data.totals.totalSales, currency)}
@@ -435,6 +435,19 @@ export default function InsightsPage() {
                     With one of those filters on: the number of Odoo sales invoices that contain at least one product
                     in your selection. An order with two towels counts once.
                   </p>
+                </>
+              }
+            />
+            <Stat
+              label="Pieces"
+              value={fmtNum(data.totals.units)}
+              hint="pieces sold"
+              delta={delta(data.trend.current.units, data.trend.baseline.units)}
+              deltaHint={prevLabel}
+              info={
+                <>
+                  <p>Number of pieces sold in the dates you picked, from Odoo invoice lines.</p>
+                  <p>Returned pieces are taken off. An order with two towels counts as two pieces.</p>
                 </>
               }
             />
@@ -624,7 +637,8 @@ export default function InsightsPage() {
                 <>
                   <p>The 10 products with the most sales in the dates you picked, from Odoo invoice lines.</p>
                   <p>
-                    <b>Orders</b> is how many Odoo sales invoices included the product. <b>Revenue</b> is the
+                    <b>Orders</b> is how many Odoo sales invoices included the product. <b>Pcs</b> is how many pieces
+                    sold, minus returns. <b>Revenue</b> is the
                     product&apos;s sales with its share of discounts and shipping.
                   </p>
                 </>
@@ -945,7 +959,7 @@ function Columns({
                 backgroundColor: INK,
                 opacity: p.label === peak.label ? 1 : 0.75,
               }}
-              title={`${p.label} — ${fmtMoney(p.value, currency)}${p.orders != null ? ` from ${fmtNum(p.orders)} orders` : ""}`}
+              title={`${p.label} — ${fmtMoney(p.value, currency)}${p.orders != null ? ` from ${fmtNum(p.orders)} orders` : ""}, ${piecesLabel(p.units)}`}
             >
               {/* Only when the column is tall enough to hold it without
                   clipping; the tooltip carries it otherwise. */}
@@ -1018,6 +1032,12 @@ function Panel({
   );
 }
 
+/** "120 pcs" — net pieces sold. */
+function piecesLabel(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `${fmtNum(n)} pcs`;
+}
+
 /** "73 orders", or a dash while order numbers are not stored yet. */
 function ordersLabel(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -1055,7 +1075,7 @@ function Bars({
           <button
             key={r.label}
             onClick={() => onPick?.(r.label)}
-            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${countOf(r)}`}
+            title={`${r.label} — ${fmtMoney(r.value, currency)} from ${countOf(r)}, ${piecesLabel(r.units)}`}
             className={`block w-full rounded-lg px-2 py-1.5 text-left transition-colors ${
               onPick ? "hover:bg-[#faf7f3]" : "cursor-default"
             } ${isActive ? "bg-[#f6efe7]" : ""}`}
@@ -1075,8 +1095,8 @@ function Bars({
                   }}
                 />
               </div>
-              <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
-                {countOf(r)}
+              <span className="shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-gray-400">
+                {countOf(r)} · {piecesLabel(r.units)}
               </span>
             </div>
           </button>
@@ -1097,7 +1117,7 @@ function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
       {bands.map((b, i) => (
         <div
           key={b.label}
-          title={`${b.label} — ${ordersLabel(b.orders)}, ${fmtMoney(b.value, currency)}`}
+          title={`${b.label} — ${ordersLabel(b.orders)}, ${piecesLabel(b.units)}, ${fmtMoney(b.value, currency)}`}
           className="rounded-lg px-2 py-1.5"
         >
           <div className="flex items-baseline justify-between gap-3">
@@ -1114,8 +1134,8 @@ function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
                 }}
               />
             </div>
-            <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
-              {ordersLabel(b.orders)}
+            <span className="shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-gray-400">
+              {ordersLabel(b.orders)} · {piecesLabel(b.units)}
             </span>
           </div>
         </div>
@@ -1138,9 +1158,10 @@ function ProductTable({
     <table className="w-full table-fixed border-collapse text-left text-xs">
       <colgroup>
         <col className="w-[6%]" />
-        <col className={trailing ? "w-[42%]" : "w-[56%]"} />
+        <col className={trailing ? "w-[32%]" : "w-[46%]"} />
         <col className="w-[12%]" />
-        <col className="w-[26%]" />
+        <col className="w-[12%]" />
+        <col className="w-[24%]" />
         {trailing && <col className="w-[14%]" />}
       </colgroup>
       <thead>
@@ -1148,6 +1169,7 @@ function ProductTable({
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 font-semibold">#</th>
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 font-semibold">Product</th>
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Orders</th>
+          <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Pcs</th>
           <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Revenue</th>
           {trailing === "last" && (
             <th className="border-b border-[#f0ece7] px-1.5 py-1.5 text-right font-semibold">Last</th>
@@ -1167,6 +1189,7 @@ function ProductTable({
             <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-700">
               {p.orders == null ? "—" : fmtNum(p.orders)}
             </td>
+            <td className="px-1.5 py-1.5 text-right tabular-nums text-gray-700">{fmtNum(p.units)}</td>
             <td className="truncate px-1.5 py-1.5 text-right tabular-nums font-semibold text-gray-900">
               {fmtMoney(p.value, currency)}
             </td>
