@@ -446,8 +446,11 @@ export default function InsightsPage() {
               deltaHint={prevLabel}
               info={
                 <>
-                  <p>Number of pieces sold in the dates you picked, from Odoo invoice lines.</p>
-                  <p>Returned pieces are taken off. An order with two towels counts as two pieces.</p>
+                  <p>Number of pieces sold in the dates you picked, counted the same way as the Summary page.</p>
+                  <p>
+                    Shops: pieces on Odoo sales invoices. Online: pieces on Shopify orders, cancelled orders left out.
+                    Returns are not taken off. An order with two towels counts as two pieces.
+                  </p>
                 </>
               }
             />
@@ -529,10 +532,14 @@ export default function InsightsPage() {
                   </p>
                   <p>
                     <b>Orders</b> (grey): online is the Shopify order count; a branch is its number of Odoo sales
-                    invoices. Returns are not counted as orders.
+                    invoices, the same as the Summary page. Returns are not counted as orders.
                   </p>
                   <p>
-                    With a room, sub-category or price filter on, it is the number of Odoo sales invoices (online ones
+                    <b>pcs</b> is pieces sold, also as on the Summary page: online from Shopify orders (cancelled ones
+                    left out), branches from Odoo invoices.
+                  </p>
+                  <p>
+                    With a room, sub-category or price filter on, both come from Odoo sales invoices (online ones
                     included) holding at least one product in your selection.
                   </p>
                 </>
