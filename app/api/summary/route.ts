@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
 import { shiftMonth } from "@/lib/format";
+import { isHiddenBranch } from "@/lib/branches";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -92,9 +93,9 @@ export async function GET(req: NextRequest) {
       .select("day,branch,orders,value")
       .gte("day", fetchFrom)
       .lte("day", to);
-    const branchRows = ((brData ?? []) as { day: string; branch: string; orders: number; value: number }[]).map(
-      (r) => ({ ...r, label: branchLabel(r.branch) })
-    );
+    const branchRows = ((brData ?? []) as { day: string; branch: string; orders: number; value: number }[])
+      .filter((r) => !isHiddenBranch(r.branch))
+      .map((r) => ({ ...r, label: branchLabel(r.branch) }));
 
     // --- Online: Shopify daily_metrics (same source as the dashboard) ---
     const { data: dmRows } = await sb
@@ -220,6 +221,7 @@ export async function GET(req: NextRequest) {
       for (const r of offlineCashback) {
         const day = (r.day ?? "").slice(0, 10);
         if (day < pf || day > pt) continue;
+        if (isHiddenBranch(r.branch)) continue;
         const used = Number(r.cashback_used || 0);
         const gross = Number(r.invoice_gross || 0);
         total.orders += 1;
@@ -343,6 +345,7 @@ export async function GET(req: NextRequest) {
       return e;
     };
     for (const r of productRows) {
+      if (isHiddenBranch(r.branch)) continue;
       if ((r.kind ?? "product") !== "product") continue; // discounts have no piece count
       if (isWeb(r.branch)) continue; // the website is counted from Shopify below
       const e = bump(r.product_name ?? String(r.product_id));

@@ -40,6 +40,13 @@ const CC_NAV: NavItem[] = [
   { href: "/order", label: "Create Order", icon: "🧾" },
   ...INQUIRIES_ITEM,
 ];
+// Mr. Kareem's view (opened from /mr.kareem): only these two pages.
+const VIEWER_NAV: NavItem[] = [
+  { href: "/insights", label: "Insights", icon: "🔎" },
+  { href: "/summary", label: "Summary", icon: "📋" },
+];
+const VIEWER_ALLOWED = ["/insights", "/summary", "/mr.kareem"];
+
 // Pages with their own date filtering, and the title to show in place of the
 // global range toolbar.
 const OWN_FILTER: Record<string, string> = {
@@ -74,7 +81,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (ccMode && !CC_ALLOWED.includes(pathname)) router.replace("/abandoned");
   }, [ccMode, pathname, router]);
 
-  const nav = ccMode ? CC_NAV : NAV;
+  // Viewer mode (set by opening /mr.kareem): Insights and Summary only.
+  const [viewerMode, setViewerMode] = useState(false);
+  useEffect(() => {
+    try {
+      setViewerMode(localStorage.getItem("viewer_mode") === "kareem");
+    } catch {
+      setViewerMode(false);
+    }
+  }, [pathname]);
+  useEffect(() => {
+    if (viewerMode && !ccMode && !VIEWER_ALLOWED.includes(pathname)) router.replace("/insights");
+  }, [viewerMode, ccMode, pathname, router]);
+
+  const nav = ccMode ? CC_NAV : viewerMode ? VIEWER_NAV : NAV;
   const logoutCc = () => {
     localStorage.removeItem("cc_mode");
     localStorage.removeItem("cc_email");

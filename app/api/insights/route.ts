@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
+import { isHiddenBranch } from "@/lib/branches";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -114,6 +115,7 @@ export async function GET(req: NextRequest) {
       allRows = await read("day,branch,product_id,product_name,room,category,subcategory,qty,value,kind");
     if (allRows.length === 0)
       allRows = await read("day,branch,product_id,product_name,room,category,subcategory,qty,value");
+    allRows = allRows.filter((r) => !isHiddenBranch(r.branch));
 
     /**
      * The website from Shopify's own order lines, not Odoo's copy of them.
@@ -309,6 +311,7 @@ export async function GET(req: NextRequest) {
       if (to) bq = bq.lte("day", to);
       const { data: bo } = await bq;
       for (const r of (bo ?? []) as { branch: string; orders: number }[]) {
+        if (isHiddenBranch(r.branch)) continue;
         const k = (r.branch ?? "").trim();
         branchOrders.set(k, (branchOrders.get(k) ?? 0) + Number(r.orders || 0));
       }
@@ -418,6 +421,10 @@ export async function GET(req: NextRequest) {
       orders: hasInvoices ? invoiceSet.size : null,
     }));
     const topProducts = [...products].sort((a, b) => b.value - a.value).slice(0, 10);
+    // Named products, for the page's Compare: the same products in another
+    // date range, even when they are not in that range's top or slow lists.
+    const wanted = new Set(sp.getAll("product").map(norm));
+    const pickedProducts = wanted.size ? products.filter((p) => wanted.has(norm(p.name))) : [];
 
     // Slow movers: fewest units shifted, among things that did sell. Products
     // with no net movement (a sale cancelled by its refund) are a different
@@ -520,6 +527,7 @@ export async function GET(req: NextRequest) {
       allTimeRows = await read(`${COLS},kind,invoices`, null, null);
       if (allTimeRows.length === 0) allTimeRows = await read(`${COLS},kind`, null, null);
       allTimeRows = swapOnline(allTimeRows, null, null);
+      allTimeRows = allTimeRows.filter((r) => !isHiddenBranch(r.branch));
     }
     let allTimeScoped = channel
       ? allTimeRows.filter((r) => (channel === "online" ? isOnline(r.branch) : !isOnline(r.branch)))
@@ -745,6 +753,7 @@ export async function GET(req: NextRequest) {
       trend,
       topProducts,
       slowProducts,
+      pickedProducts,
       // Everything the page needs to build its dropdowns, taken before the
       // room/category filters so choosing one does not empty the others.
       options: {

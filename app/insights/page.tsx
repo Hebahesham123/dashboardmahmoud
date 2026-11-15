@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { fmtNum, fmtMoney } from "@/lib/format";
 
@@ -75,6 +75,7 @@ interface Resp {
   trend: Trend;
   topProducts: Product[];
   slowProducts: Product[];
+  pickedProducts?: Product[];
   options: { rooms: string[]; categories: string[]; subcategories: string[]; branches: string[] };
 }
 
@@ -158,12 +159,9 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const query = useMemo(() => {
+  // Every filter except the dates: a box's Compare reuses it with its own dates.
+  const filterQuery = useMemo(() => {
     const p = new URLSearchParams();
-    if (!allTime) {
-      p.set("from", from);
-      p.set("to", to);
-    }
     if (channel) p.set("channel", channel);
     if (branch) p.set("branch", branch);
     if (room) p.set("room", room);
@@ -171,7 +169,20 @@ export default function InsightsPage() {
     if (minPrice) p.set("minPrice", minPrice);
     if (maxPrice) p.set("maxPrice", maxPrice);
     return p.toString();
-  }, [allTime, from, to, channel, branch, room, subcategory, minPrice, maxPrice]);
+  }, [channel, branch, room, subcategory, minPrice, maxPrice]);
+
+  const query = useMemo(() => {
+    const p = new URLSearchParams(filterQuery);
+    if (!allTime) {
+      p.set("from", from);
+      p.set("to", to);
+    }
+    return p.toString();
+  }, [filterQuery, allTime, from, to]);
+  const compareCtx = useMemo(
+    () => ({ filterQuery, base: allTime ? null : { from, to } }),
+    [filterQuery, allTime, from, to]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -245,6 +256,7 @@ export default function InsightsPage() {
   }, [data]);
 
   return (
+    <CompareCtx.Provider value={compareCtx}>
     <div>
       <PageHeader
         title="Insights"
@@ -406,6 +418,11 @@ export default function InsightsPage() {
               delta={delta(data.trend.current.value, data.trend.baseline.value)}
               deltaHint={prevLabel}
               strong
+              compare={{
+                now: data.totals.totalSales,
+                pick: (r) => r.totals.totalSales,
+                format: (n) => fmtMoney(n, currency),
+              }}
               info={
                 <>
                   <p>All NS Home sales in the dates you picked: after discounts, with shipping, minus returns.</p>
@@ -420,6 +437,7 @@ export default function InsightsPage() {
               label="Orders"
               value={data.totals.orders == null ? "—" : fmtNum(data.totals.orders)}
               hint="orders"
+              compare={{ now: data.totals.orders, pick: (r) => r.totals.orders, format: fmtNum }}
               delta={
                 data.trend.current.orders != null && data.trend.baseline.orders != null
                   ? delta(data.trend.current.orders, data.trend.baseline.orders)
@@ -444,6 +462,7 @@ export default function InsightsPage() {
               label="Pieces"
               value={fmtNum(data.totals.units)}
               hint="pieces sold"
+              compare={{ now: data.totals.units, pick: (r) => r.totals.units, format: fmtNum }}
               delta={delta(data.trend.current.units, data.trend.baseline.units)}
               deltaHint={prevLabel}
               info={
@@ -464,6 +483,11 @@ export default function InsightsPage() {
               label="Products"
               value={fmtNum(data.totals.items ?? data.totals.products)}
               hint="distinct items sold"
+              compare={{
+                now: data.totals.items ?? data.totals.products,
+                pick: (r) => r.totals.items ?? r.totals.products,
+                format: fmtNum,
+              }}
               info={<p>How many different products sold at least once in the dates you picked. From Odoo invoice lines.</p>}
             />
           </div>
@@ -480,6 +504,7 @@ export default function InsightsPage() {
             <Panel
               title="Share by room"
               subtitle="part of the whole"
+              comparable
               info={
                 <>
                   <p>Each room&apos;s share of total sales.</p>
@@ -488,12 +513,23 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <Donut rows={data.rooms} currency={currency} />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairRows(data.rooms, cmp.rooms, (r) => r.label)}
+                    currency={currency}
+                    nameHeader="Room"
+                  />
+                ) : (
+                  <Donut rows={data.rooms} currency={currency} />
+                )
+              }
             </Panel>
             <div className="lg:col-span-2">
               <Panel
                 title={byDay ? "Sales by day" : "Sales by month"}
                 subtitle="EGP"
+                comparable
                 info={
                   <>
                     <p>Total sales for each {byDay ? "day" : "month"} in the dates you picked, after discounts and returns.</p>
@@ -503,11 +539,24 @@ export default function InsightsPage() {
                   </>
                 }
               >
-                <Columns
-                  points={byDay ? data.daily : data.timeseries}
-                  currency={currency}
-                  unit={byDay ? "day" : "month"}
-                />
+                {(cmp) =>
+                  cmp ? (
+                    <CompareTable
+                      rows={pairByPosition(
+                        byDay ? data.daily : data.timeseries,
+                        byDay ? cmp.daily : cmp.timeseries
+                      )}
+                      currency={currency}
+                      nameHeader={byDay ? "Day" : "Month"}
+                    />
+                  ) : (
+                    <Columns
+                      points={byDay ? data.daily : data.timeseries}
+                      currency={currency}
+                      unit={byDay ? "day" : "month"}
+                    />
+                  )
+                }
               </Panel>
             </div>
           </div>
@@ -531,6 +580,7 @@ export default function InsightsPage() {
             <Panel
               title="Where it sells"
               subtitle="online against the shops, then branch by branch"
+              comparable
               info={
                 <>
                   <p>
@@ -552,25 +602,49 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <Bars
-                rows={data.channels}
-                currency={currency}
-                onPick={(l) => {
-                  const next = l === "Online" ? "online" : "offline";
-                  setChannel(channel === next ? "" : next);
-                }}
-                active={channel === "online" ? "Online" : channel === "offline" ? "Branches" : ""}
-              />
-              {data.branches.length > 1 && (
-                <div className="mt-3 border-t border-[#f0ece7] pt-3">
-                  <Bars rows={data.branches} currency={currency} scroll />
-                </div>
-              )}
+              {(cmp) =>
+                cmp ? (
+                  <>
+                    <CompareTable
+                      rows={pairRows(data.channels, cmp.channels, (r) => r.label)}
+                      currency={currency}
+                      nameHeader="Channel"
+                    />
+                    {data.branches.length > 1 && (
+                      <div className="mt-3 border-t border-[#f0ece7] pt-3">
+                        <CompareTable
+                          rows={pairRows(data.branches, cmp.branches, (r) => r.label)}
+                          currency={currency}
+                          nameHeader="Branch"
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                <>
+                  <Bars
+                    rows={data.channels}
+                    currency={currency}
+                    onPick={(l) => {
+                      const next = l === "Online" ? "online" : "offline";
+                      setChannel(channel === next ? "" : next);
+                    }}
+                    active={channel === "online" ? "Online" : channel === "offline" ? "Branches" : ""}
+                  />
+                  {data.branches.length > 1 && (
+                    <div className="mt-3 border-t border-[#f0ece7] pt-3">
+                      <Bars rows={data.branches} currency={currency} scroll />
+                    </div>
+                  )}
+                </>
+                )
+              }
             </Panel>
 
             <Panel
               title="Price bands"
               subtitle="by unit price — darker is dearer"
+              comparable
               info={
                 <>
                   <p>Sales grouped by the price of one piece (line value ÷ pieces), from Odoo invoice lines.</p>
@@ -582,7 +656,18 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <BandBars bands={data.bands} currency={currency} />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairRows(data.bands, cmp.bands, (b) => b.label)}
+                    currency={currency}
+                    nameHeader="Unit price"
+                    total={false}
+                  />
+                ) : (
+                  <BandBars bands={data.bands} currency={currency} />
+                )
+              }
             </Panel>
           </div>
 
@@ -593,6 +678,7 @@ export default function InsightsPage() {
                 data.rooms.reduce((a, r) => a + r.value, 0),
                 currency
               )} — total sales`}
+              comparable
               info={
                 <>
                   <p>
@@ -607,17 +693,28 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <Bars
-                rows={data.rooms}
-                currency={currency}
-                onPick={(l) => setRoom(l === room ? "" : l)}
-                active={room}
-                colorByRoom
-              />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairRows(data.rooms, cmp.rooms, (r) => r.label)}
+                    currency={currency}
+                    nameHeader="Room"
+                  />
+                ) : (
+                <Bars
+                  rows={data.rooms}
+                  currency={currency}
+                  onPick={(l) => setRoom(l === room ? "" : l)}
+                  active={room}
+                  colorByRoom
+                />
+                )
+              }
             </Panel>
             <Panel
               title="By sub-category"
               subtitle="towels, fitted sheets, cushions …"
+              comparable
               info={
                 <>
                   <p>
@@ -632,14 +729,24 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <Bars
-                rows={data.subcategories}
-                currency={currency}
-                onPick={(l) => setSubcategory(l === subcategory ? "" : l)}
-                active={subcategory}
-                colorByRoom
-                scroll
-              />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairRows(data.subcategories, cmp.subcategories, (r) => r.label, (r) => r.room)}
+                    currency={currency}
+                    nameHeader="Sub-category"
+                  />
+                ) : (
+                <Bars
+                  rows={data.subcategories}
+                  currency={currency}
+                  onPick={(l) => setSubcategory(l === subcategory ? "" : l)}
+                  active={subcategory}
+                  colorByRoom
+                  scroll
+                />
+                )
+              }
             </Panel>
           </div>
 
@@ -647,6 +754,8 @@ export default function InsightsPage() {
             <Panel
               title="Top 10 products"
               subtitle="by revenue"
+              comparable
+              products={data.topProducts.map((p) => p.name)}
               info={
                 <>
                   <p>The 10 products with the most sales in the dates you picked, from Odoo invoice lines.</p>
@@ -658,11 +767,24 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <ProductTable rows={data.topProducts} currency={currency} />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairProducts(data.topProducts, cmp.pickedProducts ?? [])}
+                    currency={currency}
+                    nameHeader="Product"
+                    total={false}
+                  />
+                ) : (
+                  <ProductTable rows={data.topProducts} currency={currency} />
+                )
+              }
             </Panel>
             <Panel
               title="10 slowest movers"
               subtitle="fewest orders, and when they last moved"
+              comparable
+              products={data.slowProducts.map((p) => p.name)}
               info={
                 <>
                   <p>Products that sold, but in the fewest orders in the dates you picked. From Odoo invoice lines.</p>
@@ -673,7 +795,18 @@ export default function InsightsPage() {
                 </>
               }
             >
-              <ProductTable rows={data.slowProducts} currency={currency} trailing="last" />
+              {(cmp) =>
+                cmp ? (
+                  <CompareTable
+                    rows={pairProducts(data.slowProducts, cmp.pickedProducts ?? [])}
+                    currency={currency}
+                    nameHeader="Product"
+                    total={false}
+                  />
+                ) : (
+                  <ProductTable rows={data.slowProducts} currency={currency} trailing="last" />
+                )
+              }
             </Panel>
           </div>
 
@@ -696,6 +829,7 @@ export default function InsightsPage() {
         </div>
       )}
     </div>
+    </CompareCtx.Provider>
   );
 }
 
@@ -733,6 +867,7 @@ function Stat({
   delta: d,
   deltaHint,
   info,
+  compare,
 }: {
   label: string;
   value: string;
@@ -741,16 +876,29 @@ function Stat({
   delta?: number | null;
   deltaHint?: string;
   info?: React.ReactNode;
+  /** The same number for another date range, picked with the Compare button. */
+  compare?: {
+    now: number | null | undefined;
+    pick: (r: Resp) => number | null | undefined;
+    format: (n: number) => string;
+  };
 }) {
+  const [range, setRange] = useState<Range | null>(null);
+  const cmp = useCompare(compare ? range : null);
+  const was = cmp.data && compare ? compare.pick(cmp.data) : null;
+  const { base: baseRange } = useContext(CompareCtx);
   return (
     <div
       className={`rounded-xl border p-4 shadow-[0_1px_2px_rgba(16,12,8,0.04)] ${
         strong ? "border-[#d8c3aa] bg-gradient-to-b from-[#fdfaf6] to-white" : "border-[#e7e2dc] bg-white"
       }`}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-        {label}
-        {info && <Info>{info}</Info>}
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+          {label}
+          {info && <Info>{info}</Info>}
+        </div>
+        {compare && <CompareButton range={range} onChange={setRange} />}
       </div>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="text-xl font-bold tabular-nums text-gray-900 sm:text-2xl">{value}</span>
@@ -761,6 +909,262 @@ function Stat({
           {hint}
           {hint && deltaHint && d !== null && d !== undefined ? " · " : ""}
           {d !== null && d !== undefined ? deltaHint : ""}
+        </div>
+      )}
+      {compare && range && (
+        <div className="mt-2 border-t border-[#f0ece7] pt-2 text-[11px]">
+          {cmp.loading ? (
+            <span className="text-gray-400">Loading {fmtRange(range)}…</span>
+          ) : cmp.error ? (
+            <span className="text-rose-600">{cmp.error}</span>
+          ) : cmp.data ? (
+            <table className="w-full border-collapse tabular-nums">
+              <tbody>
+                <tr>
+                  <td className="py-0.5 text-gray-500">{baseRange ? fmtRange(baseRange) : "All time"}</td>
+                  <td className="py-0.5 text-right font-semibold text-gray-800">
+                    {compare.now == null ? "—" : compare.format(compare.now)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-0.5 text-gray-500">{fmtRange(range)}</td>
+                  <td className="py-0.5 text-right font-semibold text-gray-800">
+                    {was == null ? "—" : compare.format(was)}
+                  </td>
+                </tr>
+                <tr className="border-t border-[#f0ece7]">
+                  <td className="py-0.5 text-gray-500">Change</td>
+                  <td className="py-0.5 text-right">
+                    {compare.now != null && was != null && (
+                      <span className="mr-1 text-gray-600">
+                        {compare.now - was >= 0 ? "+" : "−"}
+                        {compare.format(Math.abs(compare.now - was))}
+                      </span>
+                    )}
+                    <Change now={compare.now} was={was} />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Compare: any box against another date range ---------------- */
+
+interface Range {
+  from: string;
+  to: string;
+}
+
+/** The page's filters (without dates) and its current dates, for every box's Compare. */
+const CompareCtx = createContext<{ filterQuery: string; base: Range | null }>({ filterQuery: "", base: null });
+
+/** One request per range and filter set, however many boxes ask for it. */
+const compareCache = new Map<string, Promise<Resp>>();
+function loadInsights(q: string): Promise<Resp> {
+  let p = compareCache.get(q);
+  if (!p) {
+    p = fetch(`/api/insights?${q}`).then(async (r) => {
+      const text = await r.text();
+      let j: Resp;
+      try {
+        j = JSON.parse(text) as Resp;
+      } catch {
+        throw new Error(`Server error (${r.status}).`);
+      }
+      if (!j.ok) throw new Error(j.error || "Failed to load");
+      return j;
+    });
+    p.catch(() => compareCache.delete(q));
+    compareCache.set(q, p);
+  }
+  return p;
+}
+
+/** The page's data for another date range, with the same filters. */
+function useCompare(range: Range | null, products?: string[]) {
+  const { filterQuery } = useContext(CompareCtx);
+  const [state, setState] = useState<{ data: Resp | null; loading: boolean; error: string | null }>({
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const productsKey = (products ?? []).join("\u0001");
+  const from = range?.from;
+  const to = range?.to;
+  useEffect(() => {
+    if (!from || !to) {
+      setState({ data: null, loading: false, error: null });
+      return;
+    }
+    let alive = true;
+    const p = new URLSearchParams(filterQuery);
+    p.set("from", from);
+    p.set("to", to);
+    for (const n of productsKey ? productsKey.split("\u0001") : []) p.append("product", n);
+    setState((s) => ({ ...s, loading: true, error: null }));
+    loadInsights(p.toString())
+      .then((data) => alive && setState({ data, loading: false, error: null }))
+      .catch((e) => alive && setState({ data: null, loading: false, error: e instanceof Error ? e.message : String(e) }));
+    return () => {
+      alive = false;
+    };
+  }, [filterQuery, from, to, productsKey]);
+  return state;
+}
+
+function addDays(d: string, n: number): string {
+  const t = new Date(`${d}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+/** Same day n months away, kept inside the month (Mar 31 − 1 month = Feb 28). */
+function addMonths(d: string, n: number): string {
+  const [y, m, day] = d.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m - 1 + n, Math.min(day, last))).toISOString().slice(0, 10);
+}
+function comparePresets(base: Range | null): { label: string; range: Range }[] {
+  if (!base || !base.from || !base.to) return [];
+  const days = Math.round((Date.parse(base.to) - Date.parse(base.from)) / 86_400_000) + 1;
+  return [
+    { label: "Days just before", range: { from: addDays(base.from, -days), to: addDays(base.from, -1) } },
+    { label: "Same days last month", range: { from: addMonths(base.from, -1), to: addMonths(base.to, -1) } },
+    { label: "Same days last year", range: { from: addMonths(base.from, -12), to: addMonths(base.to, -12) } },
+  ];
+}
+/** "Oct 1 – Oct 15", with the year when it is not this year. */
+function fmtRange(r: Range): string {
+  const thisYear = todayStr().slice(0, 4);
+  const day = (d: string) => {
+    const [y, m, dd] = d.split("-").map(Number);
+    const name = new Date(Date.UTC(y, m - 1, dd)).toLocaleString("en", { month: "short", timeZone: "UTC" });
+    return `${name} ${dd}${String(y) !== thisYear ? ` ${y}` : ""}`;
+  };
+  return r.from === r.to ? day(r.from) : `${day(r.from)} – ${day(r.to)}`;
+}
+
+/** Change from the compared range to now: ▲ 12%, ▼ 5%, or "new". */
+function Change({ now, was }: { now: number | null | undefined; was: number | null | undefined }) {
+  if (now == null || was == null) return null;
+  if (was === 0) {
+    return now === 0 ? null : (
+      <span className="shrink-0 rounded bg-emerald-50 px-1 text-[10px] font-semibold text-emerald-700">new</span>
+    );
+  }
+  const d = (now - was) / Math.abs(was);
+  const up = d >= 0;
+  return (
+    <span
+      className={`shrink-0 whitespace-nowrap rounded px-1 text-[10px] font-semibold tabular-nums ${
+        up ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+      }`}
+      title={`${up ? "up" : "down"} ${Math.abs(d * 100).toFixed(1)}% on the compared dates`}
+    >
+      {up ? "▲" : "▼"}
+      {Math.abs(Math.round(d * 100))}%
+    </span>
+  );
+}
+
+/** "Compare" — pick the dates to set this box against. */
+function CompareButton({ range, onChange }: { range: Range | null; onChange: (r: Range | null) => void }) {
+  const { base } = useContext(CompareCtx);
+  const presets = comparePresets(base);
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // Start the custom fields on what is compared now, or the days just before.
+    const start = range ?? presets[0]?.range ?? { from: daysAgoStr(30), to: todayStr() };
+    setFrom(start.from);
+    setTo(start.to);
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const pick = (r: Range) => {
+    onChange(r.from <= r.to ? r : { from: r.to, to: r.from });
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0 normal-case tracking-normal">
+      {range ? (
+        <span className="inline-flex items-center overflow-hidden rounded-md border border-[#d8c3aa] bg-[#f6efe7] text-[10px] font-semibold text-[#6f4423]">
+          <button type="button" onClick={() => setOpen((o) => !o)} className="px-1.5 py-0.5 hover:bg-[#efe4d7]">
+            vs {fmtRange(range)}
+          </button>
+          <button
+            type="button"
+            aria-label="Stop comparing"
+            title="Stop comparing"
+            onClick={() => onChange(null)}
+            className="border-l border-[#d8c3aa] px-1.5 py-0.5 hover:bg-[#efe4d7]"
+          >
+            ×
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-md border border-[#ddd6cd] bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 hover:border-[#6f4423] hover:text-[#6f4423]"
+        >
+          Compare
+        </button>
+      )}
+      {open && (
+        <div className="absolute right-0 top-7 z-40 w-64 max-w-[calc(100vw-32px)] rounded-lg border border-[#e7e2dc] bg-white p-3 text-left font-normal shadow-lg">
+          <p className="mb-1.5 text-[11px] font-semibold text-gray-700">Compare with</p>
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => pick(p.range)}
+              className="flex w-full items-baseline justify-between gap-2 rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-[#faf7f3]"
+            >
+              <span>{p.label}</span>
+              <span className="shrink-0 text-[10px] text-gray-400">{fmtRange(p.range)}</span>
+            </button>
+          ))}
+          <div className={presets.length ? "mt-2 border-t border-[#f0ece7] pt-2" : ""}>
+            <p className="mb-1 text-[10px] text-gray-400">Or pick the dates</p>
+            <div className="flex items-center gap-1 text-xs">
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-[#ddd6cd] px-1 py-1"
+              />
+              <span className="text-gray-400">→</span>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-[#ddd6cd] px-1 py-1"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={!from || !to}
+              onClick={() => pick({ from, to })}
+              className="mt-2 w-full rounded-md bg-[#6f4423] px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+            >
+              Compare
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -1026,23 +1430,55 @@ function Panel({
   subtitle,
   info,
   children,
+  comparable,
+  products,
 }: {
   title: string;
   subtitle?: string;
   info?: React.ReactNode;
-  children: React.ReactNode;
+  /** A function gets the compared range's data (or null) to show beside the current figures. */
+  children: React.ReactNode | ((cmp: Resp | null) => React.ReactNode);
+  comparable?: boolean;
+  /** Products this box lists, so Compare can find the same products in the other range. */
+  products?: string[];
 }) {
+  const [range, setRange] = useState<Range | null>(null);
+  const cmp = useCompare(comparable ? range : null, products);
+  const { base } = useContext(CompareCtx);
+  const headings = useMemo(
+    () => ({ base: base ? fmtRange(base) : "All time", compared: range ? fmtRange(range) : "" }),
+    [base, range]
+  );
   return (
+    <CompareTableCtx.Provider value={headings}>
     <section className="rounded-xl border border-[#e7e2dc] bg-white p-4 shadow-[0_1px_2px_rgba(16,12,8,0.04)]">
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-[13px] font-bold tracking-tight text-gray-900">
           {title}
           {info && <Info>{info}</Info>}
         </h2>
-        {subtitle && <p className="shrink-0 truncate text-[11px] text-gray-400">{subtitle}</p>}
+        <div className="flex min-w-0 items-baseline gap-2">
+          {subtitle && <p className="min-w-0 truncate text-[11px] text-gray-400">{subtitle}</p>}
+          {comparable && <CompareButton range={range} onChange={setRange} />}
+        </div>
       </header>
-      {children}
+      {comparable && range && (
+        <p className="-mt-1 mb-2 text-[11px] text-gray-400">
+          {cmp.loading ? (
+            `Loading ${fmtRange(range)}…`
+          ) : cmp.error ? (
+            <span className="text-rose-600">{cmp.error}</span>
+          ) : (
+            <>
+              <b className="text-gray-600">{headings.base}</b> against <b className="text-gray-600">{fmtRange(range)}</b>,
+              same filters. Each cell is sales, with orders and pieces under it.
+            </>
+          )}
+        </p>
+      )}
+      {typeof children === "function" ? children(range ? cmp.data : null) : children}
     </section>
+    </CompareTableCtx.Provider>
   );
 }
 
@@ -1126,6 +1562,159 @@ function Bars({
     </div>
   );
 }
+
+/** One figure set for a row of the compare table. */
+interface Figures {
+  value: number;
+  orders?: number | null;
+  units: number;
+}
+interface CompareRow {
+  label: string;
+  sub?: string;
+  now: Figures | null;
+  was: Figures | null;
+}
+
+/** Rows of two lists side by side, matched by name; rows only in the old one come last. */
+function pairRows<T extends Figures>(
+  now: T[],
+  was: T[],
+  label: (r: T) => string,
+  sub?: (r: T) => string | undefined
+): CompareRow[] {
+  const key = (r: T) => label(r).trim().toLowerCase();
+  const wasBy = new Map(was.map((r) => [key(r), r]));
+  const seen = new Set<string>();
+  const out: CompareRow[] = now.map((r) => {
+    seen.add(key(r));
+    return { label: label(r), sub: sub?.(r), now: r, was: wasBy.get(key(r)) ?? null };
+  });
+  for (const r of was) if (!seen.has(key(r))) out.push({ label: label(r), sub: sub?.(r), now: null, was: r });
+  return out;
+}
+
+/** The listed products only, each beside the same product on the compared dates. */
+function pairProducts(now: Product[], was: Product[]): CompareRow[] {
+  const key = (n: string) => n.trim().toLowerCase();
+  const by = new Map(was.map((p) => [key(p.name), p]));
+  return now.map((p) => ({ label: p.name, sub: p.subcategory, now: p, was: by.get(key(p.name)) ?? null }));
+}
+
+/** Days (or months) matched by position: 1st beside 1st, so ranges of any dates line up. */
+function pairByPosition(now: Point[], was: Point[]): CompareRow[] {
+  const n = Math.max(now.length, was.length);
+  const name = (l: string) => (l.length === 10 ? fmtRange({ from: l, to: l }) : monthLabel(l, true));
+  return Array.from({ length: n }, (_, i) => ({
+    label: now[i] ? name(now[i].label) : `#${i + 1}`,
+    sub: was[i] ? `vs ${name(was[i].label)}` : undefined,
+    now: now[i] ?? null,
+    was: was[i] ?? null,
+  }));
+}
+
+/**
+ * The compare view of a box: one row per item, the picked dates beside the
+ * compared dates, and the change. Each cell is sales, with orders and pieces
+ * under it.
+ */
+function CompareTable({
+  rows,
+  currency,
+  total = true,
+  nameHeader = "Name",
+}: {
+  rows: CompareRow[];
+  currency: string;
+  /** A Total row. Off where the rows overlap (one order holds two products). */
+  total?: boolean;
+  nameHeader?: string;
+}) {
+  const { base, compared } = useContext(CompareTableCtx);
+  if (!rows.length) return <p className="py-6 text-center text-xs text-gray-400">Nothing in this selection.</p>;
+  const sum = (pick: (r: CompareRow) => Figures | null) => {
+    const list = rows.map(pick).filter(Boolean) as Figures[];
+    return {
+      value: list.reduce((a, f) => a + f.value, 0),
+      units: list.reduce((a, f) => a + f.units, 0),
+      orders: null,
+    };
+  };
+  const cell = (f: Figures | null) =>
+    f ? (
+      <>
+        <div className="font-semibold text-gray-900">{fmtMoney(f.value, currency)}</div>
+        <div className="text-[10px] text-gray-400">
+          {f.orders != null ? `${fmtNum(f.orders)} ord · ` : ""}
+          {fmtNum(f.units)} pcs
+        </div>
+      </>
+    ) : (
+      <span className="text-gray-300">—</span>
+    );
+  const pcsChange = (r: CompareRow) =>
+    r.now && r.was && r.was.units ? (
+      <div className="text-[10px] text-gray-400">
+        pcs <Change now={r.now.units} was={r.was.units} />
+      </div>
+    ) : null;
+  const th = "border-b border-[#f0ece7] px-1.5 py-1.5 font-semibold";
+  const td = "px-1.5 py-1.5 align-top tabular-nums";
+  return (
+    <div className="max-h-[340px] overflow-auto">
+      <table className="w-full min-w-[420px] border-collapse text-left text-xs">
+        <thead className="sticky top-0 bg-white">
+          <tr className="text-[10px] uppercase tracking-wider text-gray-400">
+            <th className={th}>{nameHeader}</th>
+            <th className={`${th} text-right`}>{base}</th>
+            <th className={`${th} text-right`}>{compared}</th>
+            <th className={`${th} text-right`}>Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} className="border-b border-[#f7f5f2] last:border-0 hover:bg-[#faf7f3]">
+              <td className={`${td} max-w-[180px]`}>
+                <div className="truncate text-gray-800" title={r.label}>
+                  {r.label}
+                </div>
+                {r.sub && <div className="truncate text-[10px] text-gray-400">{r.sub}</div>}
+              </td>
+              <td className={`${td} text-right`}>{cell(r.now)}</td>
+              <td className={`${td} text-right`}>{cell(r.was)}</td>
+              <td className={`${td} text-right`}>
+                <Change now={r.now?.value ?? 0} was={r.was?.value ?? 0} />
+                {!r.now && r.was && <span className="text-[10px] text-rose-600">no sales</span>}
+                {pcsChange(r)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {total && rows.length > 1 && (
+          <tfoot>
+            {(() => {
+              const n = sum((r) => r.now);
+              const w = sum((r) => r.was);
+              return (
+                <tr className="border-t border-[#e7e2dc] bg-[#faf7f3] font-semibold">
+                  <td className={`${td} text-gray-800`}>Total</td>
+                  <td className={`${td} text-right`}>{cell(n)}</td>
+                  <td className={`${td} text-right`}>{cell(w)}</td>
+                  <td className={`${td} text-right`}>
+                    <Change now={n.value} was={w.value} />
+                  </td>
+                </tr>
+              );
+            })()}
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+/** Column headings for the compare table: the picked dates and the compared ones. */
+const CompareTableCtx = createContext<{ base: string; compared: string }>({ base: "Now", compared: "Then" });
 
 /** Price bands are ordered, so here the ordinal ramp is the right encoding. */
 function BandBars({ bands, currency }: { bands: Band[]; currency: string }) {
