@@ -154,12 +154,22 @@ function toDate(v: string | undefined): string | null {
   // already ISO
   const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  // e.g. "June 20, 2026" or "20/06/2026" — let Date try, then format UTC
-  const d = new Date(t);
-  if (!isNaN(d.getTime())) {
-    return d.toISOString().slice(0, 10);
+  // A bare number is not a date to Date(): "261308" became the year 261308 and
+  // the database refused it ("time zone displacement out of range"). Only an
+  // Excel day serial (≈ 2000–2100) counts; any other number is a count, not a day.
+  if (/^\d+(\.\d+)?$/.test(t)) {
+    const serial = Number(t);
+    if (serial < 36_526 || serial > 73_051) return null;
+    return new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000).toISOString().slice(0, 10);
   }
-  return null;
+  // e.g. "June 20, 2026". Date reads it as local midnight, so take the local
+  // day — UTC would move it to the day before east of Greenwich.
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  if (year < 2000 || year > 2100) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
