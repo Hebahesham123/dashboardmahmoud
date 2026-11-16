@@ -25,16 +25,21 @@ export async function POST(req: NextRequest) {
       // Manual entry: full typed rows — upsert directly (all 4 columns).
       if (Array.isArray(body.rows)) {
         const now = new Date().toISOString();
-        const payload = body.rows
-          .filter((r: { traffic_date?: string }) => r.traffic_date)
-          .map((r: Record<string, unknown>) => ({
+        // One row per date: the same date typed twice would make the upsert
+        // fail, so the last entry for a date wins.
+        const byDate = new Map<string, Record<string, unknown>>();
+        for (const r of body.rows as Record<string, unknown>[]) {
+          if (!r?.traffic_date) continue;
+          byDate.set(String(r.traffic_date), {
             traffic_date: String(r.traffic_date),
             visitors: Number(r.visitors) || 0,
             sessions: Number(r.sessions) || 0,
             add_to_cart: Number(r.add_to_cart) || 0,
             reached_checkout: Number(r.reached_checkout) || 0,
             updated_at: now,
-          }));
+          });
+        }
+        const payload = [...byDate.values()];
         if (payload.length === 0) {
           return NextResponse.json({ error: "No valid rows (date required)." }, { status: 422 });
         }

@@ -230,18 +230,22 @@ export function mapTrafficCsv(cells: string[][]): {
     return { rows: [], mapping, headers, errors };
   }
 
-  const rows: TrafficRow[] = [];
+  // One row per day. A report can list the same day more than once (split
+  // by hour, landing page, device…); those rows are added together. Sending
+  // a day twice made the database refuse the whole upload ("ON CONFLICT DO
+  // UPDATE command cannot affect row a second time").
+  const byDay = new Map<string, TrafficRow>();
   for (const c of dataRows) {
     const date = toDate(c[dateIdx]);
     if (!date) continue;
-    rows.push({
-      traffic_date: date,
-      visitors: toNum(c[visitorsIdx]),
-      sessions: toNum(c[sessionsIdx]),
-      add_to_cart: toNum(c[cartIdx]),
-      reached_checkout: toNum(c[checkoutIdx]),
-    });
+    const r = byDay.get(date) ?? { traffic_date: date, visitors: 0, sessions: 0, add_to_cart: 0, reached_checkout: 0 };
+    r.visitors += toNum(c[visitorsIdx]);
+    r.sessions += toNum(c[sessionsIdx]);
+    r.add_to_cart += toNum(c[cartIdx]);
+    r.reached_checkout += toNum(c[checkoutIdx]);
+    byDay.set(date, r);
   }
+  const rows = [...byDay.values()];
   if (rows.length === 0)
     errors.push(`No valid date rows found under the "${headers[dateIdx]}" column.`);
 
