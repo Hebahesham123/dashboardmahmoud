@@ -35,6 +35,13 @@ export default function ImportPage() {
     setStatus({ tone: "info", msg: `Reading "${file.name}"…` });
     try {
       const name = file.name.toLowerCase();
+      // Shopify names an export after its date range, e.g.
+      // "Sessions by landing page - 2026-11-01 - 2026-11-01.csv". A one-day
+      // report goes to that day rather than to whatever the picker shows
+      // (it defaults to today, so a report for the 1st landed on the 16th).
+      const range = file.name.match(/(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})/);
+      const date = range && range[1] === range[2] ? range[1] : uploadDate;
+      if (date !== uploadDate) setUploadDate(date);
       let cells: string[][];
 
       if (name.endsWith(".xml")) {
@@ -50,7 +57,7 @@ export default function ImportPage() {
       const res = await fetch("/api/traffic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cells, month, date: uploadDate }),
+        body: JSON.stringify({ cells, month, date }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -213,6 +220,7 @@ export default function ImportPage() {
               />
               <p className="mt-1 text-[11px] text-indigo-600">
                 A “by landing page” report has no dates, so its NS-Home total is stored on the day you pick here.
+                If the file name has a single day (e.g. “… - 2026-11-01 - 2026-11-01.csv”), that day is used.
               </p>
             </div>
             <div

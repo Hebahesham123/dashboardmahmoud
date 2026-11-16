@@ -162,6 +162,9 @@ function toDate(v: string | undefined): string | null {
     if (serial < 36_526 || serial > 73_051) return null;
     return new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000).toISOString().slice(0, 10);
   }
+  // Only text that carries a 4-digit year can be a date. Date() is lenient:
+  // it read the landing page "/pages/ns-home-1" as 1 Jan 2001.
+  if (!/\b(19|20)\d{2}\b/.test(t) || t.startsWith("/")) return null;
   // e.g. "June 20, 2026". Date reads it as local midnight, so take the local
   // day — UTC would move it to the day before east of Greenwich.
   const d = new Date(t);
@@ -189,19 +192,24 @@ export function mapTrafficCsv(cells: string[][]): {
     return { rows: [], mapping: {}, headers: cells[0] ?? [], errors: ["File has no data rows."] };
   }
 
-  // Find the header row: scan the first 15 rows for one that contains a
-  // date/day column (handles title/preamble rows above the table).
-  let headerRow = 0;
+  // Find the header row: scan the first 15 rows for one that has a Day/Date
+  // column AND a traffic metric (handles title/preamble rows above the
+  // table). The column name must BE "Day"/"Date": matching any cell that
+  // contains "day" took the landing page ".../black-friday" for a header.
+  const isDateHeader = (h: string) => h === "day" || h === "date" || h === "reportdate";
+  const isMetric = (h: string) => h.includes("visitor") || h.includes("session");
+  let headerRow = -1;
   for (let r = 0; r < Math.min(cells.length, 15); r++) {
-    if (cells[r].some((h) => norm(h).includes("day") || norm(h).includes("date"))) {
+    const n = cells[r].map(norm);
+    if (n.some(isDateHeader) && n.some(isMetric)) {
       headerRow = r;
       break;
     }
   }
-  const headers = cells[headerRow];
-  const dataRows = cells.slice(headerRow + 1);
+  const headers = cells[Math.max(headerRow, 0)];
+  const dataRows = cells.slice(Math.max(headerRow, 0) + 1);
 
-  const dateIdx = findCol(headers, (h) => h.includes("day") || h.includes("date"));
+  const dateIdx = headerRow < 0 ? -1 : findCol(headers, isDateHeader);
   const visitorsIdx = findCol(headers, (h) => h.includes("visitor"));
   // sessions: a "session" column that is NOT the cart/checkout/visitor one
   const sessionsIdx = findCol(
