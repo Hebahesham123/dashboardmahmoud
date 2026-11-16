@@ -102,9 +102,9 @@ export function aggregateTraffic(
   if (visitorsIdx < 0 && sessionsIdx < 0 && cartIdx < 0 && checkoutIdx < 0) return null;
 
   // If this is a "by landing page" report, only count NS Home store traffic:
-  // the NS Home page/homepage, OR a product page that belongs to the
-  // "ns-home" collection (productHandles). Plain product pages NOT in the
-  // collection are excluded.
+  // the NS Home page, the Black Friday collection page, OR a product page
+  // that belongs to an "ns-home" collection (productHandles). Other pages
+  // and products NOT in the collection are excluded.
   const pathIdx = findCol(headers, (h) => h.includes("landingpagepath") || h.includes("path"));
   if (pathIdx >= 0) {
     const handles = opts?.productHandles;
@@ -113,8 +113,14 @@ export function aggregateTraffic(
       return m ? m[1] : null;
     };
     const isStore = (p: string) => {
-      const x = (p || "").toLowerCase();
+      let x = (p || "").toLowerCase();
+      try {
+        x = decodeURIComponent(x); // Arabic handles can arrive %-encoded
+      } catch {
+        /* keep as is */
+      }
       if (x.includes("ns-home")) return true; // the NS Home page (not the generic homepage)
+      if (x.includes("black-friday")) return true; // the Black Friday collection page
       const h = productHandle(x);
       if (!h) return false;
       // product page: include only if it's in the ns-home collection

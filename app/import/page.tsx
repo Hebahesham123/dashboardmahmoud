@@ -256,7 +256,7 @@ export default function ImportPage() {
             <ul className="mt-3 space-y-1 text-xs text-gray-500">
               <li>• <strong>By-day report</strong> (has a Day column) → fills each day automatically (the date above is ignored).</li>
               <li>• <strong>“By landing page” report</strong> (no dates) → its NS-Home total is saved to the <strong>day you pick above</strong>, so it shows in the daily columns and the month.</li>
-              <li>• Only products in the <strong>ns-home</strong> collection + the NS Home page are counted.</li>
+              <li>• Only the NS Home page, the <strong>Black Friday</strong> page and products in the <strong>ns-home</strong> collection are counted.</li>
             </ul>
           </div>
         </Card>
